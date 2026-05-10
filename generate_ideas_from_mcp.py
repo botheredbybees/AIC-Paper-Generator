@@ -221,3 +221,82 @@ def attach_private_keys(idea: dict, topic: dict, s2_papers: list[dict]) -> dict:
     result["_mcp_topic"] = topic
     result["_s2_bibtex"] = [bibtex_from_s2_paper(p) for p in (s2_papers or [])]
     return result
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate AI Scientist ideas from the a1c-knowledge MCP server"
+    )
+    parser.add_argument("--query", required=True,
+                        help="Semantic search query, e.g. 'elder clowning wellbeing'")
+    parser.add_argument("--confidence", default=None,
+                        choices=["low", "medium", "high"])
+    parser.add_argument("--domain", default=None,
+                        choices=["intervention", "theory", "method"])
+    parser.add_argument("--limit", type=int, default=10,
+                        help="Max topics to retrieve from MCP")
+    parser.add_argument("--max-questions", type=int, default=3,
+                        help="Max open questions per topic to translate")
+    parser.add_argument("--model", default="ollama/qwen3.5:9b-q8_0",
+                        help="Ollama model for idea translation")
+    parser.add_argument("--output",
+                        default="ai_scientist/ideas/mcp_generated.json",
+                        help="Output ideas JSON path")
+    parser.add_argument("--s2-papers", type=int, default=10,
+                        help="Semantic Scholar results to fetch per question")
+    parser.add_argument("--no-novelty-check", action="store_true",
+                        help="Skip Semantic Scholar novelty check")
+    parser.add_argument("--append", action="store_true",
+                        help="Append to existing ideas JSON instead of overwriting")
+    parser.add_argument("--mcp-url",
+                        default=os.environ.get("MCP_URL", "http://192.168.1.20:8765/sse"),
+                        help="MCP server SSE endpoint URL")
+    return parser.parse_args()
+
+
+async def _main(args: argparse.Namespace) -> None:
+    print(f"Fetching topics: query={args.query!r} confidence={args.confidence} "
+          f"domain={args.domain} limit={args.limit}")
+    topics = await fetch_mcp_topics(
+        args.query, args.domain, args.confidence, args.limit, args.mcp_url
+    )
+    print(f"Found {len(topics)} topic(s) with open questions")
+
+    ideas: list[dict] = []
+    for topic in topics:
+        questions = (topic.get("open_questions") or [])[:args.max_questions]
+        for question in questions:
+            print(f"  [{topic['title']}] {question[:80]}...")
+
+            s2_papers: list[dict] = []
+            if not args.no_novelty_check:
+                s2_papers = search_for_papers(question, result_limit=args.s2_papers) or []
+                print(f"    Semantic Scholar: {len(s2_papers)} paper(s) found")
+
+            idea = translate_to_idea(topic, question, s2_papers, args.model)
+            if idea is None:
+                print("    WARNING: LLM returned invalid JSON — skipping this question")
+                continue
+
+            ideas.append(attach_private_keys(idea, topic, s2_papers))
+            print(f"    Generated: {idea.get('Name', 'unknown')}")
+
+    print(f"\nTotal ideas generated: {len(ideas)}")
+
+    if args.append and os.path.exists(args.output):
+        with open(args.output) as f:
+            ideas = json.load(f) + ideas
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(ideas, f, indent=2)
+    print(f"Saved to {args.output}")
+
+
+if __name__ == "__main__":
+    asyncio.run(_main(parse_args()))
