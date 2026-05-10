@@ -180,3 +180,95 @@ async def test_fetch_mcp_topics_skips_topics_without_questions():
     assert topics == []
     # get_topic should NOT have been called for the filtered-out topic
     assert mock_session.call_tool.call_count == 1
+
+
+from generate_ideas_from_mcp import attach_private_keys, translate_to_idea
+
+
+def test_translate_to_idea_returns_valid_idea_dict():
+    topic = {
+        "title": "Therapeutic Clowning",
+        "domain": "intervention",
+        "confidence": "high",
+        "key_findings": ["Reduces anxiety in medical settings"],
+        "sources": ["fxa303-week08-therapeutic-clowning"],
+    }
+    s2_papers = [
+        {
+            "title": "Clowning in Pediatric Wards",
+            "year": 2021,
+            "venue": "Arts in Health",
+            "citationCount": 45,
+            "abstract": "Examines clowning effects on children.",
+            "citationStyles": {},
+            "authors": [{"name": "Alice Smith"}],
+        }
+    ]
+    expected_json = {
+        "Name": "elder_clowning_mechanisms",
+        "Title": "Mechanisms of Therapeutic Clowning for Older Adults",
+        "Short Hypothesis": "Therapeutic clowning reduces isolation.",
+        "Related Work": "Pediatric clowning is studied (Smith 2021)...",
+        "Abstract": "This proposal examines...",
+        "Experiments": ["Semi-structured interviews with residents"],
+        "Risk Factors and Limitations": ["Small sample size"],
+    }
+    llm_response = f"```json\n{json.dumps(expected_json)}\n```"
+
+    with patch("generate_ideas_from_mcp.create_client") as mock_cc, \
+         patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
+        mock_cc.return_value = (MagicMock(), "ollama/qwen3.5:9b-q8_0")
+        mock_llm.return_value = (llm_response, [])
+
+        idea = translate_to_idea(
+            topic=topic,
+            open_question="What mechanisms make it effective for older adults?",
+            s2_papers=s2_papers,
+            model="ollama/qwen3.5:9b-q8_0",
+        )
+
+    assert idea is not None
+    assert idea["Name"] == "elder_clowning_mechanisms"
+    assert isinstance(idea["Experiments"], list)
+    assert len(idea["Experiments"]) >= 1
+
+    # Verify LLM was called with arts/health framing (not ML framing)
+    call_kwargs = mock_llm.call_args
+    prompt_text = call_kwargs[1]["prompt"] if call_kwargs[1] else call_kwargs[0][0]
+    assert "arts and health" in prompt_text.lower()
+    assert "Therapeutic Clowning" in prompt_text
+    assert "Clowning in Pediatric Wards" in prompt_text
+
+
+def test_translate_to_idea_returns_none_on_bad_llm_output():
+    topic = {"title": "T", "domain": "d", "confidence": "low",
+             "key_findings": [], "sources": []}
+
+    with patch("generate_ideas_from_mcp.create_client") as mock_cc, \
+         patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
+        mock_cc.return_value = (MagicMock(), "ollama/qwen3.5:9b-q8_0")
+        mock_llm.return_value = ("This is not JSON at all.", [])
+
+        result = translate_to_idea(topic, "A question?", [], "ollama/qwen3.5:9b-q8_0")
+
+    assert result is None
+
+
+def test_attach_private_keys_adds_mcp_topic_and_bibtex():
+    idea = {
+        "Name": "test", "Title": "T", "Short Hypothesis": "H",
+        "Related Work": "R", "Abstract": "A",
+        "Experiments": [], "Risk Factors and Limitations": [],
+    }
+    topic = {"slug": "test-topic", "key_findings": ["F1"], "body": "B", "sources": ["s1"]}
+    s2_papers = [{"citationStyles": {"bibtex": "@article{x, title={X}}"}}]
+
+    result = attach_private_keys(idea, topic, s2_papers)
+
+    assert "_mcp_topic" in result
+    assert result["_mcp_topic"]["slug"] == "test-topic"
+    assert "_s2_bibtex" in result
+    assert len(result["_s2_bibtex"]) == 1
+    assert "@article{x" in result["_s2_bibtex"][0]
+    # Original idea fields still present
+    assert result["Name"] == "test"

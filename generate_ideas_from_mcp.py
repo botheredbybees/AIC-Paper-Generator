@@ -113,3 +113,107 @@ async def fetch_mcp_topics(
                     continue
 
             return full_topics
+
+
+# ---------------------------------------------------------------------------
+# LLM idea translation
+# ---------------------------------------------------------------------------
+
+_TRANSLATION_SYSTEM = "You are a research idea generator for arts and health research."
+
+_TRANSLATION_PROMPT = """\
+Given a topic from a personal knowledge base, an open research question,
+and a Semantic Scholar literature search on that question, your job is to:
+
+1. Assess whether the open question is already well-answered in the broader
+   literature. The personal knowledge base may have gaps that do not reflect
+   real-world research gaps.
+2. If the question is already comprehensively addressed: identify the genuine
+   remaining gap — a specific population (e.g. older adults), setting
+   (e.g. residential aged care), method, or outcome not yet studied.
+3. Produce a structured research idea grounded in what actually exists.
+
+Topic title: {title}
+Domain: {domain}
+Confidence level of existing evidence in personal knowledge base: {confidence}
+
+Key findings from personal knowledge base:
+{findings}
+
+Open research question from personal knowledge base:
+{open_question}
+
+Semantic Scholar search results for this question:
+{s2_text}
+
+Instructions:
+- If Semantic Scholar returns papers that already answer the question, acknowledge
+  this explicitly in Related Work and refine the hypothesis to address the true gap.
+- If no relevant papers are found, state this and proceed with the original question.
+- Do not fabricate citations. Only reference papers present in the Semantic Scholar
+  results above or in the personal knowledge base sources listed below.
+
+Grounding sources from personal knowledge base: {sources}
+
+Return a single JSON object wrapped in ```json ... ``` with these exact fields:
+- "Name": short identifier, lowercase, underscores only (e.g. "elder_clowning_mechanisms")
+- "Title": informative 8-12 word title
+- "Short Hypothesis": 2-3 sentences stating a testable hypothesis for the genuine gap
+- "Related Work": synthesis of what Semantic Scholar AND personal notes show; explicitly name the gap
+- "Abstract": ~250-word conference-style abstract framing this as a proposal
+- "Experiments": list of 3-5 proposed studies appropriate for arts and health research
+  (interviews, observational studies, small-N designs, systematic reviews — NOT Python ML code)
+- "Risk Factors and Limitations": list of 3-5 practical or methodological risks
+
+Return only the JSON object, no other text.\
+"""
+
+
+def translate_to_idea(
+    topic: dict,
+    open_question: str,
+    s2_papers: list[dict],
+    model: str,
+) -> dict | None:
+    """Call an LLM to translate an open research question into an AI Scientist idea dict."""
+    client, client_model = create_client(model)
+
+    findings = "\n".join(
+        f"{i + 1}. {f}"
+        for i, f in enumerate(topic.get("key_findings") or [])
+    ) or "No key findings recorded."
+
+    s2_text = "\n".join(
+        f"- {p.get('title', 'Unknown')} "
+        f"({p.get('year', '?')}, {p.get('venue', 'unknown venue')}, "
+        f"{p.get('citationCount', 0)} citations): "
+        f"{(p.get('abstract') or '')[:300]}"
+        for p in (s2_papers or [])
+    ) or "No papers found for this query."
+
+    prompt = _TRANSLATION_PROMPT.format(
+        title=topic.get("title", ""),
+        domain=topic.get("domain", ""),
+        confidence=topic.get("confidence", ""),
+        findings=findings,
+        open_question=open_question,
+        s2_text=s2_text,
+        sources=", ".join(topic.get("sources") or []),
+    )
+
+    content, _ = get_response_from_llm(
+        prompt=prompt,
+        client=client,
+        model=client_model,
+        system_message=_TRANSLATION_SYSTEM,
+        temperature=0.7,
+    )
+    return extract_json_between_markers(content)
+
+
+def attach_private_keys(idea: dict, topic: dict, s2_papers: list[dict]) -> dict:
+    """Attach private metadata keys to an idea dict for downstream use."""
+    result = dict(idea)
+    result["_mcp_topic"] = topic
+    result["_s2_bibtex"] = [bibtex_from_s2_paper(p) for p in (s2_papers or [])]
+    return result
