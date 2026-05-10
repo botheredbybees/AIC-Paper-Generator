@@ -17,4 +17,4 @@ def test_create_client_ollama_defaults_to_localhost(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     client, model = create_client("ollama/qwen3.5:9b-q8_0")
-    assert "localhost" in str(client.base_url)
+    assert "localhost:11434" in str(client.base_url)
