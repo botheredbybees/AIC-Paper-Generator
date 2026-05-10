@@ -32,9 +32,10 @@ This system autonomously generates hypotheses, runs experiments, analyzes data, 
     *   [Supported Models and API Keys](#supported-models-and-api-keys)
 2.  [Generate Research Ideas](#generate-research-ideas)
 3.  [Run AI Scientist-v2 Paper Generation Experiments](#run-ai-scientist-v2-paper-generation-experiments)
-4.  [Citing The AI Scientist-v2](#citing-the-ai-scientist-v2)
-5.  [Frequently Asked Questions](#frequently-asked-questions)
-6.  [Acknowledgement](#acknowledgement)
+4.  [MCP-to-Proposal Pipeline (Arts & Health Extension)](#mcp-to-proposal-pipeline-arts--health-extension)
+5.  [Citing The AI Scientist-v2](#citing-the-ai-scientist-v2)
+6.  [Frequently Asked Questions](#frequently-asked-questions)
+7.  [Acknowledgement](#acknowledgement)
 
 ## Requirements
 
@@ -155,6 +156,119 @@ python launch_scientist_bfts.py \
 Once the initial experimental stage is complete, you will find a timestamped log folder inside the `experiments/` directory. Navigate to `experiments/"timestamp_ideaname"/logs/0-run/` within that folder to find the tree visualization file `unified_tree_viz.html`.
 After all experiment stages are complete, the writeup stage begins. The writeup stage typically takes about 20 to 30 minutes in total. Once it finishes, you should see `timestamp_ideaname.pdf` in the `timestamp_ideaname` folder.
 For this example run, all stages typically finish within several hours.
+
+## MCP-to-Proposal Pipeline (Arts & Health Extension)
+
+This fork extends AI Scientist-v2 with a two-script pipeline that generates 4-page ICBINB-format research proposals from a personal knowledge base — without running any ML experiments. The target use case is **arts and health research** (e.g. therapeutic clowning for older adults), where "experiments" are interviews, observational studies, and systematic reviews rather than Python training loops.
+
+### How It Works
+
+```
+a1c-knowledge MCP server          Semantic Scholar
+        │                                 │
+        ▼                                 │
+generate_ideas_from_mcp.py  ─────────────┘
+  • Queries MCP for topics with open research questions
+  • Checks each question against Semantic Scholar for novelty
+  • Translates surviving questions → AI Scientist idea JSON via Ollama
+  • Attaches pre-gathered BibTeX citations as private metadata
+        │
+        ▼  ai_scientist/ideas/<topic>.json
+        │
+launch_proposal_writer.py
+  • Strips private metadata, writes topic_data.json
+  • Pre-populates cached_citations.bib (bypasses ML-biased citation loop)
+  • Drives perform_icbinb_writeup to produce a 4-page PDF
+        │
+        ▼  experiments/<timestamp>_<name>_proposal_0/<name>.pdf
+```
+
+The experiment execution phase (`perform_experiments_bfts`) is skipped entirely. The writeup LLM is instructed to write a literature review and research proposal — not to report experimental results.
+
+### Quick Start
+
+```bash
+# 1. Set environment variables
+export OLLAMA_BASE_URL=http://<ollama-host>:11434
+export MCP_URL=http://<mcp-host>:8765/sse
+# export S2_API_KEY=...   # optional — raises Semantic Scholar rate limits
+
+# 2. Generate ideas from the knowledge base
+python generate_ideas_from_mcp.py \
+  --query "elder clowning therapeutic clowning older adults wellbeing" \
+  --confidence high \
+  --limit 10 \
+  --model ollama/qwen3.5:9b-q8_0 \
+  --output ai_scientist/ideas/elder_clowning.json
+
+# 3. Write a 4-page research proposal PDF
+python launch_proposal_writer.py \
+  --load_ideas ai_scientist/ideas/elder_clowning.json \
+  --idea_idx 0 \
+  --model_writeup ollama/qwen2.5:14b \
+  --model_citation ollama/qwen2.5:14b \
+  --num_cite_rounds 10
+```
+
+Output: `experiments/<timestamp>_elder_clowning_mechanisms_proposal_0/<name>.pdf`
+
+### generate_ideas_from_mcp.py
+
+Queries the [a1c-knowledge MCP server](https://github.com/botheredbybees/wiki-db) via SSE, checks each open research question against Semantic Scholar, and translates surviving questions to AI Scientist idea JSON using a local Ollama LLM.
+
+Key arguments:
+
+| Argument | Default | Description |
+|---|---|---|
+| `--query TEXT` | *(required)* | Semantic search query |
+| `--confidence` | None | Filter: `low` / `medium` / `high` |
+| `--domain` | None | Filter: `intervention` / `theory` / `method` |
+| `--limit INT` | `10` | Max topics to retrieve |
+| `--max-questions INT` | `3` | Max open questions per topic |
+| `--model TEXT` | `ollama/qwen3.5:9b-q8_0` | Ollama model for translation |
+| `--no-novelty-check` | False | Skip Semantic Scholar step |
+| `--append` | False | Append to existing JSON |
+| `--mcp-url TEXT` | `$MCP_URL` | MCP server SSE endpoint |
+
+The LLM prompt instructs the model to assess whether each open question is already answered in the broader literature (gaps in a personal knowledge base are not necessarily real gaps), identify the genuine remaining gap, and produce a structured idea with arts-and-health-appropriate proposed studies — not Python ML code.
+
+### launch_proposal_writer.py
+
+Converts an ideas JSON into a PDF research proposal using the existing AI Scientist writeup infrastructure.
+
+Key arguments:
+
+| Argument | Default | Description |
+|---|---|---|
+| `--load_ideas FILE` | *(required)* | Path to ideas JSON |
+| `--idea_idx INT` | `0` | Which idea to process |
+| `--model_writeup TEXT` | `ollama/qwen2.5:14b` | Model for paper writing |
+| `--model_citation TEXT` | `ollama/qwen2.5:14b` | Model for citation gathering |
+| `--writeup-type TEXT` | `icbinb` | `icbinb` (4-page) or `normal` (8-page) |
+| `--skip_review` | True | Skip LLM peer review (default on) |
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and set:
+
+```
+OLLAMA_BASE_URL=http://192.168.1.20:11434   # remote Ollama instance
+MCP_URL=http://192.168.1.20:8765/sse        # a1c-knowledge MCP server
+S2_API_KEY=                                  # optional Semantic Scholar key
+```
+
+The only change to upstream AI Scientist code is two lines in `ai_scientist/llm.py` that make the Ollama base URL configurable via `OLLAMA_BASE_URL` (previously hardcoded to `localhost`).
+
+### Additional Dependencies
+
+```
+mcp             # MCP Python SDK (SSE client)
+python-dotenv   # .env file loading
+pytest          # test suite
+pytest-asyncio  # async test support
+```
+
+---
 
 ## Citing The AI Scientist-v2
 
