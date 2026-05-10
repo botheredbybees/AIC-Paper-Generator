@@ -66,3 +66,41 @@ def test_setup_experiment_folder_attempt_id_in_name(tmp_path):
     assert folder1 != folder2
     assert "0" in Path(folder1).name
     assert "1" in Path(folder2).name
+
+
+from launch_proposal_writer import prepopulate_citations
+
+
+def test_prepopulate_citations_writes_bib_and_progress(tmp_path):
+    entries = [
+        "@article{smith2021, title={Test}, author={Smith}, year={2021}}",
+        "@inproceedings{jones2022, title={Another}, year={2022}}",
+    ]
+    prepopulate_citations(str(tmp_path), entries, num_rounds=10)
+
+    bib = (tmp_path / "cached_citations.bib").read_text()
+    assert "@article{smith2021" in bib
+    assert "@inproceedings{jones2022" in bib
+
+    progress = json.loads((tmp_path / "citations_progress.json").read_text())
+    assert progress["completed_rounds"] == 10
+
+
+def test_prepopulate_citations_skips_when_no_entries(tmp_path):
+    prepopulate_citations(str(tmp_path), [], num_rounds=10)
+
+    assert not (tmp_path / "cached_citations.bib").exists()
+    assert not (tmp_path / "citations_progress.json").exists()
+
+
+def test_prepopulate_citations_deduplicates_entries(tmp_path):
+    entries = [
+        "@article{a, title={A}}",
+        "@article{a, title={A}}",  # duplicate
+        "@article{b, title={B}}",
+    ]
+    prepopulate_citations(str(tmp_path), entries, num_rounds=5)
+
+    bib = (tmp_path / "cached_citations.bib").read_text()
+    assert bib.count("@article{a") == 1
+    assert bib.count("@article{b") == 1

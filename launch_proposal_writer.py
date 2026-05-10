@@ -53,3 +53,30 @@ def setup_experiment_folder(
         json.dump(topic_data, f, indent=2)
 
     return folder, clean_idea
+
+
+# ---------------------------------------------------------------------------
+# Citation pre-population
+# ---------------------------------------------------------------------------
+
+def prepopulate_citations(
+    folder: str,
+    bibtex_entries: list[str],
+    num_rounds: int,
+) -> None:
+    """Write cached_citations.bib + citations_progress.json to skip gather_citations() loop."""
+    if not bibtex_entries:
+        return
+
+    seen: set[str] = set()
+    unique_entries: list[str] = []
+    for entry in bibtex_entries:
+        if entry not in seen:
+            seen.add(entry)
+            unique_entries.append(entry)
+
+    with open(os.path.join(folder, "cached_citations.bib"), "w", encoding="utf-8") as f:
+        f.write("\n\n".join(unique_entries))
+
+    with open(os.path.join(folder, "citations_progress.json"), "w", encoding="utf-8") as f:
+        json.dump({"completed_rounds": num_rounds}, f)
