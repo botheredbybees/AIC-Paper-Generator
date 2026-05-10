@@ -27,3 +27,7 @@ jsonschema
 omegaconf
 botocore
 boto3
+mcp
+python-dotenv
+pytest
+pytest-asyncio
