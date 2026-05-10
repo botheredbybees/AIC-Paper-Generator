@@ -82,9 +82,12 @@ async def fetch_mcp_topics(
     mcp_url: str,
 ) -> list[dict]:
     """Query the MCP server and return full topic records for topics with open questions."""
+    print(f"[MCP] Connecting to {mcp_url}")
     async with sse_client(mcp_url) as (read, write):
         async with ClientSession(read, write) as session:
+            print("[MCP] Session initialising...")
             await session.initialize()
+            print("[MCP] Session ready")
 
             args: dict = {"query": query, "limit": limit}
             if domain:
@@ -92,38 +95,52 @@ async def fetch_mcp_topics(
             if confidence:
                 args["confidence"] = confidence
 
+            print(f"[MCP] Calling search_topics: {args}")
             search_result = await session.call_tool("search_topics", arguments=args)
+            print(f"[MCP] search_topics returned {len(search_result.content)} content item(s)")
+
             if not search_result.content:
+                print("[MCP] WARNING: empty content from search_topics — 0 topics found")
                 return []
-            # The MCP server returns one TextContent item per topic (not a JSON array).
-            # Collect all items; fall back to treating content[0] as a JSON array if needed.
+
+            # FastMCP may return one TextContent per item OR a single item containing a JSON array.
             topics_raw = []
-            for item in search_result.content:
+            for i, item in enumerate(search_result.content):
                 if not hasattr(item, "text"):
+                    print(f"[MCP] Skipping content[{i}]: no .text attribute (type={type(item).__name__})")
                     continue
                 try:
                     parsed = json.loads(item.text)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    print(f"[MCP] WARNING: content[{i}] is not valid JSON: {exc}")
                     continue
                 if isinstance(parsed, list):
-                    # Unexpected array — flatten it in
+                    print(f"[MCP] content[{i}] is a JSON array ({len(parsed)} items) — flattening")
                     topics_raw.extend(parsed)
                 elif isinstance(parsed, dict):
                     topics_raw.append(parsed)
+                else:
+                    print(f"[MCP] WARNING: content[{i}] is {type(parsed).__name__}, skipping")
+
+            print(f"[MCP] Parsed {len(topics_raw)} raw topic(s)")
             topics = filter_topics_with_questions(topics_raw)
+            print(f"[MCP] {len(topics)} topic(s) have open questions")
 
             full_topics = []
             for topic in topics:
+                slug = topic["slug"]
+                print(f"[MCP] Fetching full record for slug={slug!r}")
                 get_result = await session.call_tool(
-                    "get_topic", arguments={"slug": topic["slug"]}
+                    "get_topic", arguments={"slug": slug}
                 )
                 if not get_result.content:
-                    print(f"WARNING: get_topic returned empty content for slug={topic['slug']!r}")
+                    print(f"[MCP] WARNING: get_topic returned empty content for slug={slug!r}")
                     continue
                 try:
                     full_topics.append(json.loads(get_result.content[0].text))
+                    print(f"[MCP]   OK: got full topic for {slug!r}")
                 except json.JSONDecodeError as exc:
-                    print(f"WARNING: invalid JSON from get_topic for slug={topic['slug']!r}: {exc}")
+                    print(f"[MCP] WARNING: invalid JSON from get_topic for slug={slug!r}: {exc}")
                     continue
 
             return full_topics
@@ -190,6 +207,7 @@ def translate_to_idea(
     model: str,
 ) -> dict | None:
     """Call an LLM to translate an open research question into an AI Scientist idea dict."""
+    print(f"[LLM] Calling {model} to translate question into idea JSON...")
     client, client_model = create_client(model)
 
     findings = "\n".join(
@@ -225,8 +243,13 @@ def translate_to_idea(
         system_message=_TRANSLATION_SYSTEM,
         temperature=0.7,
     )
+    print(f"[LLM] Response received ({len(content)} chars), extracting JSON...")
     result = extract_json_between_markers(content)
-    return result if isinstance(result, dict) else None
+    if not isinstance(result, dict):
+        print(f"[LLM] WARNING: expected dict, got {type(result).__name__} — raw response head: {content[:200]!r}")
+        return None
+    print(f"[LLM] Idea extracted: Name={result.get('Name')!r}")
+    return result
 
 
 def attach_private_keys(idea: dict, topic: dict, s2_papers: list[dict]) -> dict:
@@ -255,7 +278,7 @@ def parse_args() -> argparse.Namespace:
                         help="Max topics to retrieve from MCP")
     parser.add_argument("--max-questions", type=int, default=3,
                         help="Max open questions per topic to translate")
-    parser.add_argument("--model", default="ollama/qwen3.5:9b-q8_0",
+    parser.add_argument("--model", default="ollama/qwen2.5:17b",
                         help="Ollama model for idea translation")
     parser.add_argument("--output",
                         default="ai_scientist/ideas/mcp_generated.json",
@@ -273,33 +296,45 @@ def parse_args() -> argparse.Namespace:
 
 
 async def _main(args: argparse.Namespace) -> None:
-    print(f"Fetching topics: query={args.query!r} confidence={args.confidence} "
-          f"domain={args.domain} limit={args.limit}")
+    print(f"[STAGE 1/4] MCP topic search")
+    print(f"  query={args.query!r} confidence={args.confidence} "
+          f"domain={args.domain} limit={args.limit} mcp_url={args.mcp_url}")
     topics = await fetch_mcp_topics(
         args.query, args.domain, args.confidence, args.limit, args.mcp_url
     )
-    print(f"Found {len(topics)} topic(s) with open questions")
+    print(f"[STAGE 1/4] Done — {len(topics)} topic(s) with open questions")
+
+    if not topics:
+        print("No topics found. Try broadening --query, removing --confidence, or increasing --limit.")
+        return
+
+    print(f"\n[STAGE 2/4] Novelty check via Semantic Scholar")
+    if args.no_novelty_check:
+        print("  Skipping (--no-novelty-check set)")
 
     ideas: list[dict] = []
     for topic in topics:
         questions = (topic.get("open_questions") or [])[:args.max_questions]
-        for question in questions:
-            print(f"  [{topic['title']}] {question[:80]}...")
+        print(f"\n  Topic: {topic['title']!r} — {len(questions)} question(s) to process")
+        for qi, question in enumerate(questions, 1):
+            print(f"  [{qi}/{len(questions)}] {question[:100]}")
 
             s2_papers: list[dict] = []
             if not args.no_novelty_check:
+                print(f"    [S2] Searching Semantic Scholar...")
                 s2_papers = search_for_papers(question, result_limit=args.s2_papers) or []
-                print(f"    Semantic Scholar: {len(s2_papers)} paper(s) found")
+                print(f"    [S2] {len(s2_papers)} paper(s) found")
 
+            print(f"\n[STAGE 3/4] LLM idea translation (model={args.model})")
             idea = translate_to_idea(topic, question, s2_papers, args.model)
             if idea is None:
                 print("    WARNING: LLM returned invalid JSON — skipping this question")
                 continue
 
             ideas.append(attach_private_keys(idea, topic, s2_papers))
-            print(f"    Generated: {idea.get('Name', 'unknown')}")
+            print(f"    Generated idea: {idea.get('Name', 'unknown')!r}")
 
-    print(f"\nTotal ideas generated: {len(ideas)}")
+    print(f"\n[STAGE 4/4] Writing output — {len(ideas)} idea(s) generated")
 
     if args.append and os.path.exists(args.output):
         try:

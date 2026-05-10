@@ -59,6 +59,25 @@ def test_setup_experiment_folder_writes_topic_data_json(tmp_path):
     assert data["key_findings"] == ["Finding 1"]
 
 
+def test_setup_experiment_folder_no_mcp_topic(tmp_path):
+    """Ideas without _mcp_topic should produce an empty topic_data.json."""
+    idea = _make_idea()
+    del idea["_mcp_topic"]
+    folder, clean_idea = setup_experiment_folder(str(tmp_path), idea, attempt_id=0)
+
+    topic_path = Path(folder) / "topic_data.json"
+    assert topic_path.exists()
+    data = json.loads(topic_path.read_text())
+    assert data == {}
+
+
+def test_setup_experiment_folder_all_private_keys_stripped(tmp_path):
+    """Any _-prefixed key is stripped, not just the two known ones."""
+    idea = _make_idea(_future_key="should be stripped")
+    _, clean_idea = setup_experiment_folder(str(tmp_path), idea, attempt_id=0)
+    assert "_future_key" not in clean_idea
+
+
 def test_setup_experiment_folder_attempt_id_in_name(tmp_path):
     folder1, _ = setup_experiment_folder(str(tmp_path), _make_idea(), attempt_id=0)
     folder2, _ = setup_experiment_folder(str(tmp_path), _make_idea(), attempt_id=1)
@@ -102,6 +121,27 @@ def test_prepopulate_citations_deduplicates_entries(tmp_path):
     assert bib.count("@article{a") == 1
     assert bib.count("@article{b") == 1
     assert bib.index("@article{a") < bib.index("@article{b")
+
+
+def test_prepopulate_citations_bib_separator(tmp_path):
+    """Entries must be separated by exactly two newlines."""
+    entries = ["@article{a, title={A}}", "@article{b, title={B}}"]
+    prepopulate_citations(str(tmp_path), entries, num_rounds=5)
+
+    bib = (tmp_path / "cached_citations.bib").read_text()
+    parts = bib.split("\n\n")
+    assert len(parts) == 2
+    assert parts[0].startswith("@article{a")
+    assert parts[1].startswith("@article{b")
+
+
+def test_prepopulate_citations_single_entry_no_separator(tmp_path):
+    """Single entry should not have a trailing separator."""
+    prepopulate_citations(str(tmp_path), ["@article{x, title={X}}"], num_rounds=1)
+
+    bib = (tmp_path / "cached_citations.bib").read_text()
+    assert "\n\n" not in bib
+    assert bib.startswith("@article{x")
 
 
 def test_write_idea_md_contains_idea_fields(tmp_path):

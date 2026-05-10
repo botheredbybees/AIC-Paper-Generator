@@ -122,9 +122,9 @@ def parse_args() -> argparse.Namespace:
                         help="Path to ideas JSON produced by generate_ideas_from_mcp.py")
     parser.add_argument("--idea_idx", type=int, default=0,
                         help="Index of the idea to process (default: 0)")
-    parser.add_argument("--model_writeup", default="ollama/qwen2.5:14b",
+    parser.add_argument("--model_writeup", default="ollama/qwen2.5:17b",
                         help="Ollama model for paper writing (maps to big_model)")
-    parser.add_argument("--model_citation", default="ollama/qwen2.5:14b",
+    parser.add_argument("--model_citation", default="ollama/qwen2.5:17b",
                         help="Ollama model for citation gathering (maps to small_model)")
     parser.add_argument("--num_cite_rounds", type=int, default=10,
                         help="Semantic Scholar citation rounds (skipped if citations pre-populated)")
@@ -145,6 +145,7 @@ def main() -> None:
     load_ideas = Path(args.load_ideas).resolve()
     os.chdir(Path(__file__).parent)
 
+    print(f"[STAGE 1/5] Loading ideas from {load_ideas}")
     try:
         with open(load_ideas, encoding="utf-8") as f:
             ideas = json.load(f)
@@ -165,21 +166,22 @@ def main() -> None:
         sys.exit(1)
 
     idea = ideas[args.idea_idx]
-    print(f"Processing idea {args.idea_idx}: {idea.get('Name', 'unknown')}")
+    print(f"  Idea [{args.idea_idx}/{len(ideas)-1}]: {idea.get('Name', 'unknown')!r}")
 
+    print(f"\n[STAGE 2/5] Setting up experiment folder")
     folder, clean_idea = setup_experiment_folder("experiments", idea, args.attempt_id)
-    print(f"Experiment folder: {folder}")
+    print(f"  Folder: {folder}")
 
     bibtex_entries = idea.get("_s2_bibtex") or []
     prepopulate_citations(folder, bibtex_entries, args.num_cite_rounds)
     if bibtex_entries:
-        print(f"Pre-populated {len(bibtex_entries)} citation(s) from Semantic Scholar")
+        print(f"  Pre-populated {len(bibtex_entries)} citation(s) from Semantic Scholar")
     else:
-        print("No pre-populated citations — gather_citations() will run its full loop")
+        print("  No pre-populated citations — gather_citations() will run its full loop")
 
     idea_md_path = os.path.join(folder, "idea.md")
     write_idea_md(clean_idea, idea_md_path)
-    print(f"Wrote {idea_md_path}")
+    print(f"  Wrote idea.md and idea.json")
 
     with open(os.path.join(folder, "idea.json"), "w", encoding="utf-8") as f:
         json.dump(clean_idea, f, indent=2)
@@ -188,14 +190,17 @@ def main() -> None:
         from ai_scientist.perform_icbinb_writeup import gather_citations, perform_writeup
         page_limit = 4
 
-        print("Gathering citations...")
+        print(f"\n[STAGE 3/5] Gathering citations (model={args.model_citation}, "
+              f"rounds={args.num_cite_rounds})")
         citations_text = gather_citations(
             base_folder=folder,
             num_cite_rounds=args.num_cite_rounds,
             small_model=args.model_citation,
         )
+        print(f"  Citations gathered ({len(citations_text)} chars)")
 
-        print("Writing paper...")
+        print(f"\n[STAGE 4/5] Writing {page_limit}-page paper "
+              f"(writeup_model={args.model_writeup})")
         perform_writeup(
             base_folder=folder,
             citations_text=citations_text,
@@ -208,7 +213,9 @@ def main() -> None:
         from ai_scientist.perform_writeup import perform_writeup  # type: ignore[import]
         page_limit = 8
 
-        print("Writing paper...")
+        print(f"\n[STAGE 3/5] Skipped (normal writeup manages citations internally)")
+        print(f"\n[STAGE 4/5] Writing {page_limit}-page paper "
+              f"(writeup_model={args.model_writeup})")
         perform_writeup(
             base_folder=folder,
             num_cite_rounds=args.num_cite_rounds,
@@ -216,6 +223,14 @@ def main() -> None:
             big_model=args.model_writeup,
             page_limit=page_limit,
         )
+
+    print(f"\n[STAGE 5/5] Post-processing")
+    import glob
+    pdfs = sorted(glob.glob(os.path.join(folder, "*.pdf")))
+    if pdfs:
+        print(f"  PDF produced: {pdfs[-1]}")
+    else:
+        print("  WARNING: no PDF found — check LaTeX logs in the experiment folder")
 
     if not args.skip_review:
         import glob
