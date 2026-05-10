@@ -191,14 +191,17 @@ def translate_to_idea(
         for p in (s2_papers or [])
     ) or "No papers found for this query."
 
+    def _esc(s: str) -> str:
+        return s.replace("{", "{{").replace("}", "}}")
+
     prompt = _TRANSLATION_PROMPT.format(
-        title=topic.get("title", ""),
-        domain=topic.get("domain", ""),
-        confidence=topic.get("confidence", ""),
-        findings=findings,
-        open_question=open_question,
-        s2_text=s2_text,
-        sources=", ".join(topic.get("sources") or []),
+        title=_esc(topic.get("title", "")),
+        domain=_esc(topic.get("domain", "")),
+        confidence=_esc(topic.get("confidence", "")),
+        findings=_esc(findings),
+        open_question=_esc(open_question),
+        s2_text=_esc(s2_text),
+        sources=_esc(", ".join(topic.get("sources") or [])),
     )
 
     content, _ = get_response_from_llm(
@@ -208,7 +211,8 @@ def translate_to_idea(
         system_message=_TRANSLATION_SYSTEM,
         temperature=0.7,
     )
-    return extract_json_between_markers(content)
+    result = extract_json_between_markers(content)
+    return result if isinstance(result, dict) else None
 
 
 def attach_private_keys(idea: dict, topic: dict, s2_papers: list[dict]) -> dict:
