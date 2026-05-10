@@ -93,6 +93,8 @@ async def fetch_mcp_topics(
                 args["confidence"] = confidence
 
             search_result = await session.call_tool("search_topics", arguments=args)
+            if not search_result.content:
+                return []
             topics_raw = json.loads(search_result.content[0].text)
             topics = filter_topics_with_questions(topics_raw)
 
@@ -101,6 +103,13 @@ async def fetch_mcp_topics(
                 get_result = await session.call_tool(
                     "get_topic", arguments={"slug": topic["slug"]}
                 )
-                full_topics.append(json.loads(get_result.content[0].text))
+                if not get_result.content:
+                    print(f"WARNING: get_topic returned empty content for slug={topic['slug']!r}")
+                    continue
+                try:
+                    full_topics.append(json.loads(get_result.content[0].text))
+                except json.JSONDecodeError as exc:
+                    print(f"WARNING: invalid JSON from get_topic for slug={topic['slug']!r}: {exc}")
+                    continue
 
             return full_topics
