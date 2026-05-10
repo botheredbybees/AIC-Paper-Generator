@@ -196,7 +196,7 @@ def main() -> None:
             base_folder=folder,
             num_cite_rounds=args.num_cite_rounds,
             small_model=args.model_citation,
-        )
+        ) or ""
         print(f"  Citations gathered ({len(citations_text)} chars)")
 
         print(f"\n[STAGE 4/5] Writing {page_limit}-page paper "

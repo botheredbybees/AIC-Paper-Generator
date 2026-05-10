@@ -53,6 +53,7 @@ class SemanticScholarSearchTool(BaseTool):
         backoff.expo,
         (requests.exceptions.HTTPError, requests.exceptions.ConnectionError),
         on_backoff=on_backoff,
+        max_tries=4,
     )
     def search_for_papers(self, query: str) -> Optional[List[Dict]]:
         if not query:
@@ -99,7 +100,7 @@ Abstract: {paper.get("abstract", "No abstract available.")}"""
 
 
 @backoff.on_exception(
-    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff
+    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff, max_tries=4
 )
 def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
     S2_API_KEY = os.getenv("S2_API_KEY")
