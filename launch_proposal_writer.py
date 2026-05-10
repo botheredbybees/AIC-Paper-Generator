@@ -68,6 +68,7 @@ def prepopulate_citations(
     if not bibtex_entries:
         return
 
+    os.makedirs(folder, exist_ok=True)
     seen: set[str] = set()
     unique_entries: list[str] = []
     for entry in bibtex_entries:

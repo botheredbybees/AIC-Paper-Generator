@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from launch_proposal_writer import setup_experiment_folder
+from launch_proposal_writer import prepopulate_citations, setup_experiment_folder
 
 
 def _make_idea(**overrides) -> dict:
@@ -68,9 +68,6 @@ def test_setup_experiment_folder_attempt_id_in_name(tmp_path):
     assert "1" in Path(folder2).name
 
 
-from launch_proposal_writer import prepopulate_citations
-
-
 def test_prepopulate_citations_writes_bib_and_progress(tmp_path):
     entries = [
         "@article{smith2021, title={Test}, author={Smith}, year={2021}}",
@@ -104,3 +101,4 @@ def test_prepopulate_citations_deduplicates_entries(tmp_path):
     bib = (tmp_path / "cached_citations.bib").read_text()
     assert bib.count("@article{a") == 1
     assert bib.count("@article{b") == 1
+    assert bib.index("@article{a") < bib.index("@article{b")
