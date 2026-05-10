@@ -63,3 +63,44 @@ def bibtex_from_s2_paper(paper: dict) -> str:
         f"  year = {{{year}}},\n"
         f"{venue_line}}}"
     )
+
+
+# ---------------------------------------------------------------------------
+# MCP client
+# ---------------------------------------------------------------------------
+
+def filter_topics_with_questions(topics: list[dict]) -> list[dict]:
+    """Keep only topics that have at least one open question."""
+    return [t for t in topics if t.get("open_questions")]
+
+
+async def fetch_mcp_topics(
+    query: str,
+    domain: str | None,
+    confidence: str | None,
+    limit: int,
+    mcp_url: str,
+) -> list[dict]:
+    """Query the MCP server and return full topic records for topics with open questions."""
+    async with sse_client(mcp_url) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            args: dict = {"query": query, "limit": limit}
+            if domain:
+                args["domain"] = domain
+            if confidence:
+                args["confidence"] = confidence
+
+            search_result = await session.call_tool("search_topics", arguments=args)
+            topics_raw = json.loads(search_result.content[0].text)
+            topics = filter_topics_with_questions(topics_raw)
+
+            full_topics = []
+            for topic in topics:
+                get_result = await session.call_tool(
+                    "get_topic", arguments={"slug": topic["slug"]}
+                )
+                full_topics.append(json.loads(get_result.content[0].text))
+
+            return full_topics

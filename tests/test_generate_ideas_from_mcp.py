@@ -1,6 +1,10 @@
+import json
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from ai_scientist.llm import create_client
 
@@ -71,3 +75,108 @@ def test_bibtex_handles_missing_authors():
     result = bibtex_from_s2_paper(paper)
     assert "@article{" in result
     assert "Authorless Paper" in result
+
+
+from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
+
+
+def test_filter_topics_keeps_only_those_with_questions():
+    topics = [
+        {"slug": "a", "open_questions": ["Q1"]},
+        {"slug": "b", "open_questions": []},
+        {"slug": "c", "open_questions": None},
+        {"slug": "d", "open_questions": ["Q2", "Q3"]},
+    ]
+    result = filter_topics_with_questions(topics)
+    assert [t["slug"] for t in result] == ["a", "d"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_mcp_topics_returns_full_topic_data():
+    search_payload = [
+        {
+            "slug": "therapeutic-clowning",
+            "title": "Therapeutic Clowning",
+            "open_questions": ["What makes it effective?"],
+            "domain": "intervention",
+            "confidence": "high",
+            "tags": [],
+        }
+    ]
+    full_payload = {
+        "slug": "therapeutic-clowning",
+        "title": "Therapeutic Clowning",
+        "domain": "intervention",
+        "confidence": "high",
+        "tags": [],
+        "open_questions": ["What makes it effective?"],
+        "key_findings": ["Reduces anxiety", "Improves mood"],
+        "body": "Synthesis body text.",
+        "sources": ["fxa303-week08-therapeutic-clowning"],
+    }
+
+    mock_search_result = MagicMock()
+    mock_search_result.content = [MagicMock(text=json.dumps(search_payload))]
+
+    mock_get_result = MagicMock()
+    mock_get_result.content = [MagicMock(text=json.dumps(full_payload))]
+
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(
+        side_effect=[mock_search_result, mock_get_result]
+    )
+
+    mock_session_cm = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+    mock_transport_cm = AsyncMock()
+    mock_transport_cm.__aenter__ = AsyncMock(
+        return_value=(AsyncMock(), AsyncMock())
+    )
+    mock_transport_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("generate_ideas_from_mcp.sse_client", return_value=mock_transport_cm), \
+         patch("generate_ideas_from_mcp.ClientSession", return_value=mock_session_cm):
+        topics = await fetch_mcp_topics(
+            query="therapeutic clowning",
+            domain=None,
+            confidence=None,
+            limit=10,
+            mcp_url="http://test:8765/sse",
+        )
+
+    assert len(topics) == 1
+    assert topics[0]["slug"] == "therapeutic-clowning"
+    assert topics[0]["key_findings"] == ["Reduces anxiety", "Improves mood"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_mcp_topics_skips_topics_without_questions():
+    search_payload = [
+        {"slug": "no-q", "open_questions": [], "title": "No Questions"},
+    ]
+
+    mock_search_result = MagicMock()
+    mock_search_result.content = [MagicMock(text=json.dumps(search_payload))]
+
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(return_value=mock_search_result)
+
+    mock_session_cm = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+    mock_transport_cm = AsyncMock()
+    mock_transport_cm.__aenter__ = AsyncMock(
+        return_value=(AsyncMock(), AsyncMock())
+    )
+    mock_transport_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("generate_ideas_from_mcp.sse_client", return_value=mock_transport_cm), \
+         patch("generate_ideas_from_mcp.ClientSession", return_value=mock_session_cm):
+        topics = await fetch_mcp_topics("clowning", None, None, 10, "http://test:8765/sse")
+
+    assert topics == []
+    # get_topic should NOT have been called for the filtered-out topic
+    assert mock_session.call_tool.call_count == 1
