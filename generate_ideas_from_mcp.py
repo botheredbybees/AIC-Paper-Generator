@@ -95,7 +95,21 @@ async def fetch_mcp_topics(
             search_result = await session.call_tool("search_topics", arguments=args)
             if not search_result.content:
                 return []
-            topics_raw = json.loads(search_result.content[0].text)
+            # The MCP server returns one TextContent item per topic (not a JSON array).
+            # Collect all items; fall back to treating content[0] as a JSON array if needed.
+            topics_raw = []
+            for item in search_result.content:
+                if not hasattr(item, "text"):
+                    continue
+                try:
+                    parsed = json.loads(item.text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, list):
+                    # Unexpected array — flatten it in
+                    topics_raw.extend(parsed)
+                elif isinstance(parsed, dict):
+                    topics_raw.append(parsed)
             topics = filter_topics_with_questions(topics_raw)
 
             full_topics = []
