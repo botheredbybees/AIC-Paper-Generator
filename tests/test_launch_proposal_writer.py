@@ -136,6 +136,7 @@ def test_write_idea_md_appends_proposal_note(tmp_path):
     assert "## Writing Instructions" in content
     assert "research proposal" in content.lower()
     assert "Do not fabricate" in content
+    assert content.count("## Writing Instructions") == 1
 
 
 def test_write_idea_md_proposal_note_comes_after_idea_content(tmp_path):
