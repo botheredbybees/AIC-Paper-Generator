@@ -185,20 +185,45 @@ launch_proposal_writer.py
 
 The experiment execution phase (`perform_experiments_bfts`) is skipped entirely. The writeup LLM is instructed to write a literature review and research proposal — not to report experimental results.
 
+### Installation (Proposal Pipeline Only)
+
+This pipeline does not need CUDA, PyTorch, or conda. A plain Python virtualenv works.
+
+```bash
+pip install -r requirements.txt
+
+# LaTeX compiler — tectonic downloads packages automatically, no sudo required
+mkdir -p ~/bin
+curl -L "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.16.9/tectonic-0.16.9-x86_64-unknown-linux-musl.tar.gz" \
+  -o /tmp/tectonic.tar.gz
+tar xzf /tmp/tectonic.tar.gz -C ~/bin
+chmod +x ~/bin/tectonic
+
+# Create pdflatex/bibtex shims so AI Scientist's compile_latex() works unchanged
+printf '#!/bin/bash\nexec "$(dirname "$0")/tectonic" "${@: -1}"\n' > ~/bin/pdflatex
+printf '#!/bin/bash\necho "bibtex: handled by tectonic"; exit 0\n' > ~/bin/bibtex
+chmod +x ~/bin/pdflatex ~/bin/bibtex
+```
+
+Copy `.env.example` to `.env` and fill in your values (see [Environment Variables](#environment-variables) below).
+
 ### Quick Start
 
 ```bash
-# 1. Set environment variables
+# Put tectonic shims on PATH
+export PATH="$HOME/bin:$PATH"
+
+# Credentials and endpoints — or set these in .env
 export OLLAMA_BASE_URL=http://<ollama-host>:11434
-export MCP_URL=http://<mcp-host>:8765/sse
-# export S2_API_KEY=...   # optional — raises Semantic Scholar rate limits
+export MCP_URL=http://localhost:8765/sse   # use localhost if MCP runs on this machine
+export S2_API_KEY=<your-key>               # recommended: 1 req/sec authenticated vs strict anon limits
 
 # 2. Generate ideas from the knowledge base
 python generate_ideas_from_mcp.py \
   --query "elder clowning therapeutic clowning older adults wellbeing" \
   --confidence high \
   --limit 10 \
-  --model ollama/qwen3.5:9b-q8_0 \
+  --model ollama/qwen2.5:14b \
   --output ai_scientist/ideas/elder_clowning.json
 
 # 3. Write a 4-page research proposal PDF
@@ -210,7 +235,7 @@ python launch_proposal_writer.py \
   --num_cite_rounds 10
 ```
 
-Output: `experiments/<timestamp>_elder_clowning_mechanisms_proposal_0/<name>.pdf`
+Output: `experiments/<timestamp>_<idea_name>_proposal_0/<name>_reflection1.pdf`
 
 ### generate_ideas_from_mcp.py
 
@@ -253,9 +278,11 @@ Copy `.env.example` to `.env` and set:
 
 ```
 OLLAMA_BASE_URL=http://192.168.1.20:11434   # remote Ollama instance
-MCP_URL=http://192.168.1.20:8765/sse        # a1c-knowledge MCP server
-S2_API_KEY=                                  # optional Semantic Scholar key
+MCP_URL=http://localhost:8765/sse            # use localhost — IP address rejected by FastMCP host check
+S2_API_KEY=your_key_here                     # get one at semanticscholar.org/product/api (1 req/sec limit)
 ```
+
+> **MCP_URL note:** FastMCP 1.x rejects connections whose `Host` header contains an IP address even when DNS-rebinding protection is nominally disabled. Always connect via `localhost` or a hostname, never a bare IP.
 
 The only change to upstream AI Scientist code is two lines in `ai_scientist/llm.py` that make the Ollama base URL configurable via `OLLAMA_BASE_URL` (previously hardcoded to `localhost`).
 

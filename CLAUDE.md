@@ -112,3 +112,92 @@ bfts_config.yaml                  # Tree search hyperparameters
 ```
 
 The tree search runs in 4 stages, each with configurable iteration budgets. `AgentManager` coordinates which nodes to expand; `parallel_agent.py` runs `num_workers` nodes concurrently; `interpreter.py` executes the LLM-generated code in isolation with a timeout.
+
+---
+
+## Arts & Health Extension (MCP-to-Proposal Pipeline)
+
+This fork adds two scripts that generate 4-page ICBINB research proposals from the `a1c-knowledge` PostgreSQL knowledge base **without running any ML experiments**. Target use case: Diploma of Creative Arts and Health research.
+
+### Added Files
+
+```
+generate_ideas_from_mcp.py    # MCP query → S2 novelty → Ollama LLM → ideas JSON
+launch_proposal_writer.py     # ideas JSON → experiment folder → citation pre-pop → PDF
+tests/
+  test_generate_ideas_from_mcp.py   # 21 tests
+  test_launch_proposal_writer.py    # 14 tests
+  conftest.py                        # pytest-asyncio config
+pytest.ini                           # asyncio_mode = auto
+.env.example                         # OLLAMA_BASE_URL, MCP_URL, S2_API_KEY
+```
+
+### Upstream Modifications
+
+Only one file in the upstream codebase was changed:
+
+- `ai_scientist/llm.py` — two lines make the Ollama base URL configurable via `OLLAMA_BASE_URL` env var (was hardcoded to `localhost:11434`)
+- `ai_scientist/tools/semantic_scholar.py` — `max_tries=4` added to both `@backoff` decorators to prevent infinite retry loops on 429 rate-limit errors
+
+### Environment Setup
+
+```bash
+source ~/ml_env/bin/activate
+export PATH="$HOME/bin:$PATH"   # tectonic shims live here
+# .env is loaded automatically via python-dotenv
+```
+
+Key `.env` values:
+- `MCP_URL=http://localhost:8765/sse` — must be `localhost`, not an IP (FastMCP host validation)
+- `OLLAMA_BASE_URL=http://192.168.1.20:11434`
+- `S2_API_KEY=...` — 1 req/sec authenticated rate limit
+
+### LaTeX Compilation
+
+The upstream code calls `pdflatex` and `bibtex`. This system uses **tectonic** shims instead:
+
+- `~/bin/pdflatex` — passes the `.tex` file to `tectonic`; tectonic handles multi-pass internally
+- `~/bin/bibtex` — no-op; tectonic handles bibliography automatically
+
+`PATH` must include `~/bin` when running `launch_proposal_writer.py`.
+
+### Running the Pipeline
+
+```bash
+# Stage 1: generate ideas (35-60 sec per topic, LLM-bound)
+python generate_ideas_from_mcp.py \
+  --query "therapeutic clowning older adults wellbeing" \
+  --limit 3 --max-questions 1 \
+  --model ollama/qwen2.5:14b \
+  --output ai_scientist/ideas/elder_clowning.json
+
+# Stage 2: write 4-page PDF (2-5 min)
+python launch_proposal_writer.py \
+  --load_ideas ai_scientist/ideas/elder_clowning.json \
+  --idea_idx 0 \
+  --model_writeup ollama/qwen2.5:14b \
+  --model_citation ollama/qwen2.5:14b \
+  --num_cite_rounds 3
+```
+
+Output: `experiments/<timestamp>_<name>_proposal_0/<name>_reflection1.pdf`
+
+### Test Suite
+
+```bash
+pytest tests/ -v
+```
+
+35 tests, all passing. Tests mock MCP, S2, and LLM calls — no external services needed.
+
+### Known Issues
+
+- S2 search queries use the raw open-question text; results are often tangential. The LLM prompt handles "no relevant papers found" gracefully.
+- Tectonic emits `TeX rerun seems needed, stopping at 6 passes` when bibliography references shift between passes. The PDF is still correct.
+- `gather_citations()` returns `None` when all S2 calls fail; guarded with `or ""` in `launch_proposal_writer.py`.
+
+### Spec and Design Docs
+
+- `docs/superpowers/specs/2026-05-10-mcp-to-ai-scientist-design.md`
+- `docs/superpowers/plans/2026-05-10-mcp-to-ai-scientist.md`
+- `programmers_notes.md` — implementation internals and gotchas
