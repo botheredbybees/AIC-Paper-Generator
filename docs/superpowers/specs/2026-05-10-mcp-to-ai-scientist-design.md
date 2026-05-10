@@ -8,8 +8,9 @@
 
 Extend AI Scientist-v2 with a two-script pipeline that:
 1. Queries the a1c-knowledge MCP server for topics with open research questions
-2. Translates those questions into AI Scientist idea JSON format using a local Ollama LLM
-3. Produces a 4-page ICBINB-format PDF research proposal/literature review per idea, using the existing writeup machinery but skipping the experiment execution phase entirely
+2. Checks each open question against Semantic Scholar to determine whether it is already answered in the broader literature (gaps in the personal knowledge base are not necessarily real gaps)
+3. Translates surviving questions into AI Scientist idea JSON format using a local Ollama LLM, grounding `Related Work` in real papers rather than only personal notes
+4. Produces a 4-page ICBINB-format PDF research proposal/literature review per idea, using the existing writeup machinery but skipping the experiment execution phase entirely
 
 The test topic is **elder clowning / therapeutic clowning for older adults**. All parameters are CLI arguments so any research area can be explored by changing `--query`.
 
@@ -49,7 +50,17 @@ User runs generate_ideas_from_mcp.py
   │    Returns: full body, key_findings, sources list
   │
   ├─ For each open question (up to --max-questions):
-  │    LLM (Ollama) → structured AI Scientist idea JSON
+  │    │
+  │    ├─ Semantic Scholar search_for_papers(open_question, limit=--s2-papers)
+  │    │    Returns: [{title, authors, year, venue, abstract, citationCount}]
+  │    │    Purpose: determine whether the gap is real or just absent from
+  │    │             the personal knowledge base
+  │    │
+  │    └─ LLM (Ollama) receives: topic context + key_findings + open_question
+  │                               + Semantic Scholar results
+  │         Instruction: assess novelty; if question already answered, refine
+  │         to identify the genuine remaining gap (population, setting, method)
+  │         → structured AI Scientist idea JSON with grounded Related Work
   │
   └─ Write/append → ai_scientist/ideas/mcp_generated.json
 
@@ -83,43 +94,66 @@ User runs launch_proposal_writer.py
 | `--max-questions INT` | `3` | Max open questions to translate per topic |
 | `--model TEXT` | `ollama/qwen3.5:9b-q8_0` | LLM for idea translation |
 | `--output FILE` | `ai_scientist/ideas/mcp_generated.json` | Output path |
+| `--s2-papers INT` | `10` | Semantic Scholar results to fetch per open question |
+| `--no-novelty-check` | False | Skip Semantic Scholar step (use if rate-limited) |
 | `--append` | False | Append to existing JSON instead of overwriting |
 | `--mcp-url TEXT` | `$MCP_URL` or `http://192.168.1.20:8765/sse` | MCP server SSE endpoint |
 
-### MCP Connection
+### MCP Connection and Novelty Check
 
-Uses the `mcp` Python SDK async SSE client. The extraction function is async; the script entry point uses `asyncio.run()`. Two MCP tool calls per topic:
+Uses the `mcp` Python SDK async SSE client. The extraction function is async; the script entry point uses `asyncio.run()`. Per topic:
 
 1. `search_topics(query, domain, confidence, limit)` — returns list with `open_questions` already included
 2. `get_topic(slug)` — returns full `body`, `key_findings`, `sources` for richer LLM context
+3. For each open question: `search_for_papers(open_question, result_limit=--s2-papers)` from `ai_scientist/tools/semantic_scholar.py` — synchronous HTTP call, returns real published papers to ground the LLM's novelty assessment
+
+Semantic Scholar is called synchronously inside the async flow (it uses `requests`, not `httpx`). A 1-second sleep is built into `search_for_papers()` to respect rate limits. With `S2_API_KEY` set, rate limits are higher.
 
 ### Idea Translation Prompt
 
-The LLM receives per open question:
+The LLM receives per open question (Semantic Scholar results included unless `--no-novelty-check`):
 
 ```
 You are a research idea generator for arts and health research.
-Given a topic from a personal knowledge base and one open research question,
-produce a structured research idea suitable for a literature review and
-research proposal paper.
+Given a topic from a personal knowledge base, an open research question,
+and a Semantic Scholar literature search on that question, your job is to:
+
+1. Assess whether the open question is already well-answered in the broader
+   literature. The personal knowledge base may have gaps that do not reflect
+   real-world research gaps.
+2. If the question is already comprehensively addressed: identify the genuine
+   remaining gap — a specific population (e.g. older adults), setting
+   (e.g. residential aged care), method, or outcome not yet studied.
+3. Produce a structured research idea grounded in what actually exists.
 
 Topic title: {title}
 Domain: {domain}
-Confidence level of existing evidence: {confidence}
+Confidence level of existing evidence in personal knowledge base: {confidence}
 
-Key findings from existing literature:
+Key findings from personal knowledge base:
 {key_findings as numbered list}
 
-Open research question:
+Open research question from personal knowledge base:
 {open_question}
 
-Grounding sources: {comma-separated source slugs}
+Semantic Scholar search results for this question:
+{for each paper: "- {title} ({year}, {venue}, {citationCount} citations): {abstract[:300]}"}
+
+Instructions:
+- If Semantic Scholar returns papers that already answer the question, acknowledge
+  this explicitly in Related Work and refine the hypothesis to address the true gap.
+- If no relevant papers are found, state this and proceed with the original question.
+- Do not fabricate citations. Only reference papers present in the Semantic Scholar
+  results above or in the personal knowledge base sources listed below.
+
+Grounding sources from personal knowledge base: {comma-separated source slugs}
 
 Return a single JSON object with these fields:
 - "Name": short identifier, lowercase, underscores only (e.g. "elder_clowning_mechanisms")
 - "Title": informative 8-12 word title
-- "Short Hypothesis": 2-3 sentences stating a testable hypothesis
-- "Related Work": what existing literature shows and the specific gap this addresses
+- "Short Hypothesis": 2-3 sentences stating a testable hypothesis for the genuine gap
+- "Related Work": synthesis of what Semantic Scholar AND personal notes show;
+  explicitly name the gap this proposal addresses
 - "Abstract": ~250-word conference-style abstract framing this as a proposal
 - "Experiments": list of 3-5 proposed studies appropriate for arts and health research
   (interviews, observational studies, small-N designs, systematic reviews — NOT Python ML code)
