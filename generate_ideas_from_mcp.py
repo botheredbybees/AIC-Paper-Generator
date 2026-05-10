@@ -41,7 +41,7 @@ def bibtex_from_s2_paper(paper: dict) -> str:
         return styles["bibtex"]
 
     authors = paper.get("authors") or []
-    year = paper.get("year") or "0000"
+    year = str(paper.get("year") or "0000")
     title = paper.get("title") or "Unknown Title"
     venue = paper.get("venue") or ""
 
