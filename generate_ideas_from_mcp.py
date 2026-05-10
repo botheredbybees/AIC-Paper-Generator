@@ -278,7 +278,7 @@ def parse_args() -> argparse.Namespace:
                         help="Max topics to retrieve from MCP")
     parser.add_argument("--max-questions", type=int, default=3,
                         help="Max open questions per topic to translate")
-    parser.add_argument("--model", default="ollama/qwen2.5:17b",
+    parser.add_argument("--model", default="ollama/qwen2.5:14b",
                         help="Ollama model for idea translation")
     parser.add_argument("--output",
                         default="ai_scientist/ideas/mcp_generated.json",

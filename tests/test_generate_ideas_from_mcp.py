@@ -12,15 +12,15 @@ from ai_scientist.llm import create_client
 def test_create_client_ollama_respects_base_url_env(monkeypatch):
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.20:11434")
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
-    client, model = create_client("ollama/qwen3.5:9b-q8_0")
+    client, model = create_client("ollama/qwen2.5:14b")
     assert "192.168.1.20" in str(client.base_url)
-    assert model == "ollama/qwen3.5:9b-q8_0"
+    assert model == "ollama/qwen2.5:14b"
 
 
 def test_create_client_ollama_defaults_to_localhost(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
-    client, model = create_client("ollama/qwen3.5:9b-q8_0")
+    client, model = create_client("ollama/qwen2.5:14b")
     assert "localhost:11434" in str(client.base_url)
 
 
@@ -337,14 +337,14 @@ def test_translate_to_idea_returns_valid_idea_dict():
 
     with patch("generate_ideas_from_mcp.create_client") as mock_cc, \
          patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
-        mock_cc.return_value = (MagicMock(), "ollama/qwen3.5:9b-q8_0")
+        mock_cc.return_value = (MagicMock(), "ollama/qwen2.5:14b")
         mock_llm.return_value = (llm_response, [])
 
         idea = translate_to_idea(
             topic=topic,
             open_question="What mechanisms make it effective for older adults?",
             s2_papers=s2_papers,
-            model="ollama/qwen3.5:9b-q8_0",
+            model="ollama/qwen2.5:14b",
         )
 
     assert idea is not None
@@ -366,10 +366,10 @@ def test_translate_to_idea_returns_none_on_bad_llm_output():
 
     with patch("generate_ideas_from_mcp.create_client") as mock_cc, \
          patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
-        mock_cc.return_value = (MagicMock(), "ollama/qwen3.5:9b-q8_0")
+        mock_cc.return_value = (MagicMock(), "ollama/qwen2.5:14b")
         mock_llm.return_value = ("This is not JSON at all.", [])
 
-        result = translate_to_idea(topic, "A question?", [], "ollama/qwen3.5:9b-q8_0")
+        result = translate_to_idea(topic, "A question?", [], "ollama/qwen2.5:14b")
 
     assert result is None
 
@@ -381,10 +381,10 @@ def test_translate_to_idea_returns_none_when_llm_returns_list():
 
     with patch("generate_ideas_from_mcp.create_client") as mock_cc, \
          patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
-        mock_cc.return_value = (MagicMock(), "ollama/qwen2.5:17b")
+        mock_cc.return_value = (MagicMock(), "ollama/qwen2.5:14b")
         mock_llm.return_value = ('```json\n[{"Name": "x"}]\n```', [])
 
-        result = translate_to_idea(topic, "Q?", [], "ollama/qwen2.5:17b")
+        result = translate_to_idea(topic, "Q?", [], "ollama/qwen2.5:14b")
 
     assert result is None
 
@@ -407,10 +407,10 @@ def test_translate_to_idea_handles_curly_braces_in_topic_data():
 
     with patch("generate_ideas_from_mcp.create_client") as mock_cc, \
          patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
-        mock_cc.return_value = (MagicMock(), "ollama/qwen2.5:17b")
+        mock_cc.return_value = (MagicMock(), "ollama/qwen2.5:14b")
         mock_llm.return_value = (f"```json\n{json.dumps(expected_json)}\n```", [])
 
-        result = translate_to_idea(topic, "How does PERMA {apply}?", [], "ollama/qwen2.5:17b")
+        result = translate_to_idea(topic, "How does PERMA {apply}?", [], "ollama/qwen2.5:14b")
 
     assert result is not None
     assert result["Name"] == "perma_model"

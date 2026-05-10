@@ -122,9 +122,9 @@ def parse_args() -> argparse.Namespace:
                         help="Path to ideas JSON produced by generate_ideas_from_mcp.py")
     parser.add_argument("--idea_idx", type=int, default=0,
                         help="Index of the idea to process (default: 0)")
-    parser.add_argument("--model_writeup", default="ollama/qwen2.5:17b",
+    parser.add_argument("--model_writeup", default="ollama/qwen2.5:14b",
                         help="Ollama model for paper writing (maps to big_model)")
-    parser.add_argument("--model_citation", default="ollama/qwen2.5:17b",
+    parser.add_argument("--model_citation", default="ollama/qwen2.5:14b",
                         help="Ollama model for citation gathering (maps to small_model)")
     parser.add_argument("--num_cite_rounds", type=int, default=10,
                         help="Semantic Scholar citation rounds (skipped if citations pre-populated)")
