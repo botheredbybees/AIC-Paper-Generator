@@ -37,7 +37,7 @@ def test_setup_experiment_folder_creates_directory(tmp_path):
     assert os.path.isdir(folder)
     assert "test_idea" in folder
     assert "proposal" in folder
-    assert "_0" in folder or "attempt_0" in folder or folder.endswith("_0")
+    assert "_proposal_0" in folder
 
 
 def test_setup_experiment_folder_strips_private_keys(tmp_path):

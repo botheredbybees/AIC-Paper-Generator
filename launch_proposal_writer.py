@@ -25,8 +25,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Must run from project root: perform_writeup uses relative paths to LaTeX templates.
-os.chdir(Path(__file__).parent)
+# NOTE: os.chdir(Path(__file__).parent) is called inside main() to avoid
+# mutating the working directory at import time.
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ def setup_experiment_folder(
     clean_idea = {k: v for k, v in idea.items() if not k.startswith("_")}
     topic_data = idea.get("_mcp_topic") or {}
 
-    date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
     folder = os.path.join(
         experiments_base,
         f"{date}_{clean_idea['Name']}_proposal_{attempt_id}",
