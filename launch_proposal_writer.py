@@ -141,12 +141,23 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    args = parse_args()
+    load_ideas = Path(args.load_ideas).resolve()
     os.chdir(Path(__file__).parent)
 
-    args = parse_args()
+    try:
+        with open(load_ideas, encoding="utf-8") as f:
+            ideas = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: ideas file not found: {load_ideas}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as exc:
+        print(f"Error: invalid JSON in {load_ideas}: {exc}", file=sys.stderr)
+        sys.exit(1)
 
-    with open(args.load_ideas, encoding="utf-8") as f:
-        ideas = json.load(f)
+    if not isinstance(ideas, list):
+        print(f"Error: {load_ideas} must contain a JSON array, got {type(ideas).__name__}", file=sys.stderr)
+        sys.exit(1)
 
     if args.idea_idx >= len(ideas):
         print(f"Error: --idea_idx {args.idea_idx} is out of range "
