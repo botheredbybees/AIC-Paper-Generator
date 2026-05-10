@@ -288,12 +288,19 @@ async def _main(args: argparse.Namespace) -> None:
     print(f"\nTotal ideas generated: {len(ideas)}")
 
     if args.append and os.path.exists(args.output):
-        with open(args.output) as f:
-            ideas = json.load(f) + ideas
+        try:
+            with open(args.output, encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, list):
+                ideas = existing + ideas
+            else:
+                print(f"WARNING: {args.output} is not a JSON list — ignoring existing content")
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"WARNING: could not read existing ideas from {args.output}: {exc}")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(ideas, f, indent=2)
     print(f"Saved to {args.output}")
 
