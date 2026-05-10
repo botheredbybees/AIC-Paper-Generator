@@ -81,3 +81,30 @@ def prepopulate_citations(
 
     with open(os.path.join(folder, "citations_progress.json"), "w", encoding="utf-8") as f:
         json.dump({"completed_rounds": num_rounds}, f)
+
+
+# ---------------------------------------------------------------------------
+# idea.md generation
+# ---------------------------------------------------------------------------
+
+PROPOSAL_NOTE = """
+## Writing Instructions
+
+This is a research proposal. No experiments have been conducted yet.
+Write this paper as a structured literature review and research proposal:
+present the open question, synthesise the existing evidence base, and
+propose a concrete methodology. Do not fabricate experimental results.
+Frame any results-like content as expected or projected outcomes.
+Use the future tense for proposed work.
+"""
+
+
+def write_idea_md(idea: dict, output_path: str) -> None:
+    """Write idea to markdown using bfts_utils, then append the proposal note."""
+    from ai_scientist.treesearch.bfts_utils import idea_to_markdown
+
+    # Third arg (load_code) is a required positional — pass None to skip code injection.
+    idea_to_markdown(idea, output_path, None)
+
+    with open(output_path, "a", encoding="utf-8") as f:
+        f.write(PROPOSAL_NOTE)

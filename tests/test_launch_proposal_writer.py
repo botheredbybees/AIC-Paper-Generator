@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from launch_proposal_writer import prepopulate_citations, setup_experiment_folder
+from launch_proposal_writer import prepopulate_citations, setup_experiment_folder, write_idea_md, PROPOSAL_NOTE
 
 
 def _make_idea(**overrides) -> dict:
@@ -102,3 +102,52 @@ def test_prepopulate_citations_deduplicates_entries(tmp_path):
     assert bib.count("@article{a") == 1
     assert bib.count("@article{b") == 1
     assert bib.index("@article{a") < bib.index("@article{b")
+
+
+def test_write_idea_md_contains_idea_fields(tmp_path):
+    idea = {
+        "Name": "elder_clowning",
+        "Title": "Mechanisms of Therapeutic Clowning",
+        "Short Hypothesis": "Clowning reduces isolation.",
+        "Related Work": "Prior work on clowning.",
+        "Abstract": "An abstract.",
+        "Experiments": ["Conduct interviews", "Observational study"],
+        "Risk Factors and Limitations": ["Small N"],
+    }
+    out = str(tmp_path / "idea.md")
+    write_idea_md(idea, out)
+
+    content = Path(out).read_text()
+    assert "Mechanisms of Therapeutic Clowning" in content
+    assert "Clowning reduces isolation." in content
+    assert "Conduct interviews" in content
+
+
+def test_write_idea_md_appends_proposal_note(tmp_path):
+    idea = {
+        "Name": "x", "Title": "T", "Short Hypothesis": "H",
+        "Related Work": "R", "Abstract": "A",
+        "Experiments": [], "Risk Factors and Limitations": [],
+    }
+    out = str(tmp_path / "idea.md")
+    write_idea_md(idea, out)
+
+    content = Path(out).read_text()
+    assert "## Writing Instructions" in content
+    assert "research proposal" in content.lower()
+    assert "Do not fabricate" in content
+
+
+def test_write_idea_md_proposal_note_comes_after_idea_content(tmp_path):
+    idea = {
+        "Name": "x", "Title": "My Title", "Short Hypothesis": "H",
+        "Related Work": "R", "Abstract": "A",
+        "Experiments": [], "Risk Factors and Limitations": [],
+    }
+    out = str(tmp_path / "idea.md")
+    write_idea_md(idea, out)
+
+    content = Path(out).read_text()
+    title_pos = content.index("My Title")
+    note_pos = content.index("## Writing Instructions")
+    assert title_pos < note_pos
