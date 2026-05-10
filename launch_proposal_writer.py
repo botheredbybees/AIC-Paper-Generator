@@ -10,8 +10,8 @@ Usage:
     python launch_proposal_writer.py \
         --load_ideas ai_scientist/ideas/elder_clowning.json \
         --idea_idx 0 \
-        --model_writeup ollama/qwen2.5:14b \
-        --model_citation ollama/qwen2.5:14b
+        --model_writeup ollama/qwen2.5-coder:14b \
+        --model_citation ollama/qwen2.5-coder:14b
 """
 
 import argparse
@@ -84,6 +84,52 @@ def prepopulate_citations(
 
 
 # ---------------------------------------------------------------------------
+# Option B: synthetic experiment summaries from MCP topic data
+# ---------------------------------------------------------------------------
+
+def write_synthetic_summaries(folder: str, topic_data: dict) -> None:
+    """Populate logs/0-run/{research,baseline}_summary.json from MCP topic data.
+
+    Gives the writeup LLM structured "findings" to report instead of empty
+    dicts, making the generated paper substantively richer.
+
+    Schema expected by filter_experiment_summaries():
+        {"best node": {"overall_plan": str, "analysis": str, "metric": {}}}
+    """
+    logs_dir = os.path.join(folder, "logs", "0-run")
+    os.makedirs(logs_dir, exist_ok=True)
+
+    body = topic_data.get("body", "")
+    key_findings: list[str] = topic_data.get("key_findings", [])
+    open_questions: list[str] = topic_data.get("open_questions", [])
+
+    analysis_lines = [f"- {f}" for f in key_findings]
+    if open_questions:
+        analysis_lines += ["", "Open research questions:"] + [f"- {q}" for q in open_questions]
+    analysis_text = "\n".join(analysis_lines)
+
+    research_summary = {
+        "best node": {
+            "overall_plan": body,
+            "analysis": analysis_text,
+            "metric": {},
+        }
+    }
+    baseline_summary = {
+        "best node": {
+            "overall_plan": "No baseline experiment conducted (proposal mode).",
+            "analysis": "This is a research proposal; no empirical baseline results are available.",
+            "metric": {},
+        }
+    }
+
+    with open(os.path.join(logs_dir, "research_summary.json"), "w", encoding="utf-8") as f:
+        json.dump(research_summary, f, indent=2)
+    with open(os.path.join(logs_dir, "baseline_summary.json"), "w", encoding="utf-8") as f:
+        json.dump(baseline_summary, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
 # idea.md generation
 # ---------------------------------------------------------------------------
 
@@ -122,10 +168,12 @@ def parse_args() -> argparse.Namespace:
                         help="Path to ideas JSON produced by generate_ideas_from_mcp.py")
     parser.add_argument("--idea_idx", type=int, default=0,
                         help="Index of the idea to process (default: 0)")
-    parser.add_argument("--model_writeup", default="ollama/qwen2.5:14b",
+    parser.add_argument("--model_writeup", default="ollama/qwen2.5-coder:14b",
                         help="Ollama model for paper writing (maps to big_model)")
-    parser.add_argument("--model_citation", default="ollama/qwen2.5:14b",
+    parser.add_argument("--model_citation", default="ollama/qwen2.5-coder:14b",
                         help="Ollama model for citation gathering (maps to small_model)")
+    parser.add_argument("--model_vlm", default="ollama/qwen2.5vl:7b",
+                        help="Vision-capable Ollama model for figure/caption review")
     parser.add_argument("--num_cite_rounds", type=int, default=10,
                         help="Semantic Scholar citation rounds (skipped if citations pre-populated)")
     parser.add_argument("--writeup-type", default="icbinb",
@@ -186,6 +234,13 @@ def main() -> None:
     with open(os.path.join(folder, "idea.json"), "w", encoding="utf-8") as f:
         json.dump(clean_idea, f, indent=2)
 
+    topic_data = idea.get("_mcp_topic") or {}
+    if topic_data:
+        write_synthetic_summaries(folder, topic_data)
+        print(f"  Wrote synthetic experiment summaries (Option B)")
+    else:
+        print(f"  No MCP topic data found — summaries will be empty")
+
     if args.writeup_type == "icbinb":
         from ai_scientist.perform_icbinb_writeup import gather_citations, perform_writeup
         page_limit = 4
@@ -207,6 +262,7 @@ def main() -> None:
             num_cite_rounds=args.num_cite_rounds,
             small_model=args.model_citation,
             big_model=args.model_writeup,
+            vlm_model=args.model_vlm,
             page_limit=page_limit,
         )
     else:
@@ -221,6 +277,7 @@ def main() -> None:
             num_cite_rounds=args.num_cite_rounds,
             small_model=args.model_citation,
             big_model=args.model_writeup,
+            vlm_model=args.model_vlm,
             page_limit=page_limit,
         )
 

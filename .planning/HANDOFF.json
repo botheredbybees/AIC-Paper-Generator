@@ -1,0 +1,62 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-10T20:42:54.226Z",
+  "source": "auto-postool",
+  "partial": false,
+  "phase": null,
+  "phase_name": null,
+  "phase_dir": null,
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "auto-checkpoint",
+  "completed_tasks": [],
+  "remaining_tasks": [],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [],
+  "uncommitted_files": [
+    {
+      "status": "M",
+      "path": "ai_scientist/blank_icbinb_latex/template.tex"
+    },
+    {
+      "status": "M",
+      "path": "ai_scientist/llm.py"
+    },
+    {
+      "status": "M",
+      "path": "ai_scientist/perform_icbinb_writeup.py"
+    },
+    {
+      "status": "M",
+      "path": "ai_scientist/perform_vlm_review.py"
+    },
+    {
+      "status": "M",
+      "path": "ai_scientist/vlm.py"
+    },
+    {
+      "status": "M",
+      "path": "generate_ideas_from_mcp.py"
+    },
+    {
+      "status": "M",
+      "path": "launch_proposal_writer.py"
+    },
+    {
+      "status": "M",
+      "path": "tests/test_generate_ideas_from_mcp.py"
+    },
+    {
+      "status": "??",
+      "path": "ai_scientist/ideas/elder_clowning.json"
+    },
+    {
+      "status": "??",
+      "path": "ai_scientist/ideas/mcp_generated.json"
+    }
+  ],
+  "next_action": null,
+  "context_notes": "Recent commits:\nf9fa7a7 docs: README quick start, CLAUDE.md extension section, programmers_notes.md\n61f2069 smoke test fixes: S2 backoff cap + citations_text None guard\n4965a49 fix: standardise all Ollama calls to qwen2.5:14b\n0a5c40e feat: deeper tests, staged debug logging, unify model to qwen2.5:17b\n7b8935e fix: handle MCP SSE returning per-topic TextContent items in fetch_mcp_topics"
+}

@@ -59,6 +59,8 @@ AVAILABLE_LLMS = [
     "ollama/qwen3:32b",
     "ollama/qwen3:235b",
 
+    "ollama/qwen2.5:14b",
+    "ollama/qwen2.5-coder:14b",
     "ollama/qwen2.5vl:8b",
     "ollama/qwen2.5vl:32b",
 

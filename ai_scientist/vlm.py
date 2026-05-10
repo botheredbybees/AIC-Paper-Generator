@@ -26,6 +26,7 @@ AVAILABLE_VLMS = [
     "ollama/mistral-small3.2:24b",
 
     # qwen
+    "ollama/qwen2.5vl:7b",
     "ollama/qwen2.5vl:32b",
 
     "ollama/z-uo/qwen2.5vl_tools:32b",
@@ -207,7 +208,7 @@ def create_client(model: str) -> tuple[Any, str]:
         print(f"Using Ollama API with model {model}.")
         return openai.OpenAI(
             api_key=os.environ.get("OLLAMA_API_KEY", ""),
-            base_url="http://localhost:11434/v1"
+            base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1",
         ), model
     else:
         raise ValueError(f"Model {model} not supported.")

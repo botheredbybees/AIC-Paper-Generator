@@ -430,8 +430,9 @@ def detect_duplicate_figures(client, client_model, pdf_path):
         )
 
     try:
+        _api_model = client_model.replace("ollama/", "") if client_model.startswith("ollama/") else client_model
         response = client.chat.completions.create(
-            model=client_model,
+            model=_api_model,
             messages=messages,
             max_tokens=1000,
         )

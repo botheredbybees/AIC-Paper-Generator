@@ -42,13 +42,118 @@ def remove_accents_and_clean(s):
     return ascii_str
 
 
+_MIN_BODY_CHARS = 500  # reject LLM bodies shorter than this after stripping filecontents
+
+
+def _extract_braced_arg(latex: str, cmd: str) -> str:
+    """Return the content of \\cmd{...} with correct brace counting.
+
+    The naive non-greedy regex breaks on commands with nested braces like
+    \\title{\\textbf{Foo}} because it stops at the first inner } .
+    Returns '' if the command is absent or braces are unmatched.
+    """
+    m = re.search(r'\\' + re.escape(cmd) + r'\{', latex)
+    if not m:
+        return ''
+    start = m.end()
+    depth = 1
+    i = start
+    while i < len(latex) and depth > 0:
+        if latex[i] == '{':
+            depth += 1
+        elif latex[i] == '}':
+            depth -= 1
+        i += 1
+    if depth == 0:
+        return latex[start:i - 1].strip()
+    return ''  # unmatched — treat as absent
+
+
+def _splice_llm_latex(llm_latex: str, saved_preamble: str) -> str | None:
+    """Keep the known-good preamble and splice in only the LLM's title + body.
+
+    Small models routinely mangle the documentclass / usepackage lines.
+    This function throws away whatever preamble the LLM emitted and replaces it
+    with `saved_preamble` (captured from template.tex before the LLM ran),
+    while still honouring the LLM's \title{} choice and full document body.
+
+    Returns None when the LLM body is trivially empty (e.g. just a filecontents
+    block), signalling that the caller should keep the current version unchanged.
+    """
+    # Extract the LLM's title and author with proper brace-depth counting.
+    llm_title = _extract_braced_arg(llm_latex, 'title')
+    llm_author = _extract_braced_arg(llm_latex, 'author')
+
+    # Extract the LLM's document body (between \begin{document} … \end{document}).
+    body_match = re.search(
+        r'\\begin\{document\}(.*?)\\end\{document\}', llm_latex, re.DOTALL
+    )
+    llm_body = body_match.group(1) if body_match else llm_latex
+
+    # Reject trivially-empty bodies (LLM replaced content with just filecontents/placeholders).
+    body_content = re.sub(
+        r'\\begin\{filecontents\*?\}.*?\\end\{filecontents\*?\}', '', llm_body, flags=re.DOTALL
+    ).strip()
+    if len(body_content) < _MIN_BODY_CHARS:
+        print(
+            f"WARNING: LLM body has only {len(body_content)} content chars after stripping "
+            f"filecontents blocks; rejecting update to avoid empty document."
+        )
+        return None
+
+    # Inject the LLM's title into the saved preamble's placeholder.
+    preamble = saved_preamble
+    if llm_title:
+        preamble = re.sub(r'%+TITLE%+.*?%+TITLE%+', llm_title, preamble, flags=re.DOTALL)
+
+    # Inject the LLM's author if it looks meaningful (not "anonymous").
+    if llm_author and llm_author.lower() not in ('anonymous', ''):
+        preamble = re.sub(r'%+AUTHOR%+.*?%+AUTHOR%+', llm_author, preamble, flags=re.DOTALL)
+
+    # Remove any \bibliographystyle the LLM injected — the template controls this.
+    llm_body = re.sub(r'\\bibliographystyle\{[^}]*\}', '', llm_body)
+
+    return preamble + '\\begin{document}\n' + llm_body + '\n\\end{document}\n'
+
+
+def _strip_hallucinated_figures(latex: str, valid_filenames: list[str]) -> str:
+    """Remove figure environments whose \\includegraphics all reference non-existent files.
+
+    LLMs often invent plausible-sounding filenames (e.g. performance_comparison.png)
+    that were never generated. Leaving them in causes LaTeX to abort.
+    """
+    valid = {os.path.basename(f) for f in valid_filenames}
+
+    def _keep_env(m: re.Match) -> str:
+        env = m.group(0)
+        refs = re.findall(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', env)
+        if refs and all(os.path.basename(r) not in valid for r in refs):
+            return ''
+        return env
+
+    # Strip whole figure / figure* environments with only bad refs.
+    result = re.sub(
+        r'\\begin\{figure\*?\}.*?\\end\{figure\*?\}',
+        _keep_env,
+        latex,
+        flags=re.DOTALL,
+    )
+    # Strip any leftover standalone \includegraphics not in a figure env.
+    def _keep_graphic(m: re.Match) -> str:
+        return m.group(0) if os.path.basename(m.group(1)) in valid else ''
+
+    result = re.sub(
+        r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}',
+        _keep_graphic,
+        result,
+    )
+    return result
+
+
 def compile_latex(cwd, pdf_file, timeout=30):
     print("GENERATING LATEX")
 
     commands = [
-        ["pdflatex", "-interaction=nonstopmode", "template.tex"],
-        ["bibtex", "template"],
-        ["pdflatex", "-interaction=nonstopmode", "template.tex"],
         ["pdflatex", "-interaction=nonstopmode", "template.tex"],
     ]
 
@@ -62,8 +167,12 @@ def compile_latex(cwd, pdf_file, timeout=30):
                 text=True,
                 timeout=timeout,
             )
-            print("Standard Output:\n", result.stdout)
-            print("Standard Error:\n", result.stderr)
+            # Only print output when there are actual errors (not tectonic's
+            # routine multi-pass notes / BibTeX rerun messages).
+            has_error = result.returncode != 0 or "error:" in result.stdout.lower() or "error:" in result.stderr.lower()
+            if has_error:
+                print("Standard Output:\n", result.stdout)
+                print("Standard Error:\n", result.stderr)
         except subprocess.TimeoutExpired:
             print(
                 f"EXCEPTION in compile_latex: LaTeX timed out after {timeout} seconds."
@@ -446,6 +555,8 @@ This JSON will be automatically parsed, so ensure the format is precise."""
 
         json_output = extract_json_between_markers(text)
         assert json_output is not None, "Failed to extract JSON from LLM output"
+        if isinstance(json_output, list):
+            json_output = json_output[0]
         query = json_output["Query"]
         papers = search_for_papers(query, result_limit=5)
     except Exception:
@@ -592,7 +703,7 @@ Ensure you are always writing good compilable LaTeX code. Common mistakes that s
 - Do not hallucinate new citations or any results not in the logs.
 
 Ensure proper citation usage:
-- Always include references within \begin{{filecontents}}{{references.bib}} ... \end{{filecontents}}, even if they haven't changed from the previous round.
+- Do NOT include a \\begin{{filecontents}} block anywhere in your response. The bibliography is already in the document preamble and must not be duplicated.
 - Use citations from the provided references.bib content.
 - Each section (especially Related Work) should have multiple citations.
 
@@ -861,6 +972,7 @@ def perform_writeup(
     num_cite_rounds=20,
     small_model="gpt-4o-2024-05-13",
     big_model="o1-2024-12-17",
+    vlm_model=None,
     n_writeup_reflections=3,
     page_limit=4,
 ):
@@ -950,7 +1062,8 @@ def perform_writeup(
 
         # Generate VLM-based descriptions
         try:
-            vlm_client, vlm_model = create_vlm_client(small_model)
+            _vlm_model_name = vlm_model if vlm_model is not None else small_model
+            vlm_client, vlm_model = create_vlm_client(_vlm_model_name)
             desc_map = {}
             for pf in plot_names:
                 ppath = osp.join(figures_dir, pf)
@@ -985,6 +1098,10 @@ def perform_writeup(
         with open(writeup_file, "r") as f:
             writeup_text = f.read()
 
+        # Save the correct preamble now, before the LLM can overwrite it.
+        _preamble_split = writeup_text.find('\\begin{document}')
+        _saved_preamble = writeup_text[:_preamble_split] if _preamble_split != -1 else None
+
         combined_prompt = writeup_prompt.format(
             idea_text=idea_text,
             summaries=combined_summaries_str,
@@ -1006,8 +1123,20 @@ def perform_writeup(
         if not latex_code_match:
             return False
         updated_latex_code = latex_code_match.group(1).strip()
-        with open(writeup_file, "w") as f:
-            f.write(updated_latex_code)
+
+        if _saved_preamble is not None:
+            _spliced = _splice_llm_latex(updated_latex_code, _saved_preamble)
+            if _spliced is None:
+                # Body was trivially empty; keep the current template.tex and let
+                # the reflection loop attempt to recover usable content.
+                print("WARNING: Initial writeup body rejected; keeping current template for reflection.")
+            else:
+                updated_latex_code = _strip_hallucinated_figures(_spliced, plot_names)
+                with open(writeup_file, "w") as f:
+                    f.write(updated_latex_code)
+        else:
+            with open(writeup_file, "w") as f:
+                f.write(updated_latex_code)
 
         # Multiple reflection loops on the final LaTeX
         for i in range(n_writeup_reflections):
@@ -1078,7 +1207,7 @@ Return the entire file in full, with no unfilled placeholders!
 This must be an acceptable complete LaTeX writeup.
 Do not hallucinate any details!
 Ensure proper citation usage:
-- Always include references within \begin{{filecontents}}{{references.bib}} ... \end{{filecontents}}, even if they haven't changed from the previous round.
+- Do NOT include a \\begin{{filecontents}} block anywhere in your response. The bibliography is already in the document preamble and must not be duplicated.
 - Use citations from the provided references.bib content.
 """
 
@@ -1096,7 +1225,13 @@ Ensure proper citation usage:
                 r"```latex(.*?)```", reflection_response, re.DOTALL
             )
             if reflection_code_match:
-                reflected_latex_code = reflection_code_match.group(1).strip()
+                _raw = reflection_code_match.group(1).strip()
+                _spliced = _splice_llm_latex(_raw, _saved_preamble) if _saved_preamble is not None else _raw
+                if _spliced is None:
+                    print("WARNING: LLM returned trivial body, skipping reflection update.")
+                    reflected_latex_code = current_latex
+                else:
+                    reflected_latex_code = _strip_hallucinated_figures(_spliced, plot_names)
                 if reflected_latex_code != current_latex:
                     final_text = reflected_latex_code
                     cleanup_map = {
@@ -1163,7 +1298,13 @@ If you believe you are done with reflection, simply say: "I am done"."""
                 r"```latex(.*?)```", reflection_response, re.DOTALL
             )
             if reflection_code_match:
-                reflected_latex_code = reflection_code_match.group(1).strip()
+                _raw = reflection_code_match.group(1).strip()
+                _spliced = _splice_llm_latex(_raw, _saved_preamble) if _saved_preamble is not None else _raw
+                if _spliced is None:
+                    print("WARNING: LLM returned trivial body, skipping reflection update.")
+                    reflected_latex_code = current_latex
+                else:
+                    reflected_latex_code = _strip_hallucinated_figures(_spliced, plot_names)
                 if reflected_latex_code != current_latex:
                     final_text = reflected_latex_code
                     cleanup_map = {
@@ -1188,6 +1329,10 @@ If you believe you are done with reflection, simply say: "I am done"."""
 
         # Final reflection on page limit
         # Save PDF with reflection
+
+        # Read current latex in case the reflection loop didn't run (n_writeup_reflections=0).
+        with open(writeup_file, "r") as _f:
+            current_latex = _f.read()
 
         # Get new reflection_page_info
         reflection_page_info = get_reflection_page_info(reflection_pdf, page_limit)
@@ -1215,13 +1360,19 @@ USE MINIMAL EDITS TO OPTIMIZE THE PAGE LIMIT USAGE."""
             r"```latex(.*?)```", reflection_response, re.DOTALL
         )
         if reflection_code_match:
-            reflected_latex_code = reflection_code_match.group(1).strip()
+            _raw = reflection_code_match.group(1).strip()
+            _spliced = _splice_llm_latex(_raw, _saved_preamble) if _saved_preamble is not None else _raw
+            if _spliced is None:
+                print("WARNING: LLM returned trivial body, skipping final page-limit update.")
+                reflected_latex_code = current_latex
+            else:
+                reflected_latex_code = _strip_hallucinated_figures(_spliced, plot_names)
             if reflected_latex_code != current_latex:
                 final_text = reflected_latex_code
                 cleanup_map = {
                     "</end": r"\\end",
                     "</begin": r"\\begin",
-                    "’": "'",
+                    "’": "’",
                 }
                 for bad_str, repl_str in cleanup_map.items():
                     final_text = final_text.replace(bad_str, repl_str)
