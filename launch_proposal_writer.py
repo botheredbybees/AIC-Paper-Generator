@@ -108,3 +108,122 @@ def write_idea_md(idea: dict, output_path: str) -> None:
 
     with open(output_path, "a", encoding="utf-8") as f:
         f.write(PROPOSAL_NOTE)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Write a research proposal PDF from an AI Scientist ideas JSON"
+    )
+    parser.add_argument("--load_ideas", required=True,
+                        help="Path to ideas JSON produced by generate_ideas_from_mcp.py")
+    parser.add_argument("--idea_idx", type=int, default=0,
+                        help="Index of the idea to process (default: 0)")
+    parser.add_argument("--model_writeup", default="ollama/qwen2.5:14b",
+                        help="Ollama model for paper writing (maps to big_model)")
+    parser.add_argument("--model_citation", default="ollama/qwen2.5:14b",
+                        help="Ollama model for citation gathering (maps to small_model)")
+    parser.add_argument("--num_cite_rounds", type=int, default=10,
+                        help="Semantic Scholar citation rounds (skipped if citations pre-populated)")
+    parser.add_argument("--writeup-type", default="icbinb",
+                        choices=["icbinb", "normal"],
+                        help="icbinb = 4-page, normal = 8-page")
+    parser.add_argument("--attempt_id", type=int, default=0,
+                        help="Disambiguates parallel runs")
+    parser.add_argument("--skip_review", action="store_true", default=True,
+                        help="Skip LLM peer review (default: True — no figures in proposal mode)")
+    parser.add_argument("--no-skip-review", dest="skip_review", action="store_false",
+                        help="Enable LLM peer review")
+    return parser.parse_args()
+
+
+def main() -> None:
+    os.chdir(Path(__file__).parent)
+
+    args = parse_args()
+
+    with open(args.load_ideas, encoding="utf-8") as f:
+        ideas = json.load(f)
+
+    if args.idea_idx >= len(ideas):
+        print(f"Error: --idea_idx {args.idea_idx} is out of range "
+              f"(JSON contains {len(ideas)} idea(s))", file=sys.stderr)
+        sys.exit(1)
+
+    idea = ideas[args.idea_idx]
+    print(f"Processing idea {args.idea_idx}: {idea.get('Name', 'unknown')}")
+
+    folder, clean_idea = setup_experiment_folder("experiments", idea, args.attempt_id)
+    print(f"Experiment folder: {folder}")
+
+    bibtex_entries = idea.get("_s2_bibtex") or []
+    prepopulate_citations(folder, bibtex_entries, args.num_cite_rounds)
+    if bibtex_entries:
+        print(f"Pre-populated {len(bibtex_entries)} citation(s) from Semantic Scholar")
+    else:
+        print("No pre-populated citations — gather_citations() will run its full loop")
+
+    idea_md_path = os.path.join(folder, "idea.md")
+    write_idea_md(clean_idea, idea_md_path)
+    print(f"Wrote {idea_md_path}")
+
+    with open(os.path.join(folder, "idea.json"), "w", encoding="utf-8") as f:
+        json.dump(clean_idea, f, indent=2)
+
+    if args.writeup_type == "icbinb":
+        from ai_scientist.perform_icbinb_writeup import gather_citations, perform_writeup
+        page_limit = 4
+
+        print("Gathering citations...")
+        citations_text = gather_citations(
+            base_folder=folder,
+            num_cite_rounds=args.num_cite_rounds,
+            small_model=args.model_citation,
+        )
+
+        print("Writing paper...")
+        perform_writeup(
+            base_folder=folder,
+            citations_text=citations_text,
+            num_cite_rounds=args.num_cite_rounds,
+            small_model=args.model_citation,
+            big_model=args.model_writeup,
+            page_limit=page_limit,
+        )
+    else:
+        from ai_scientist.perform_writeup import perform_writeup  # type: ignore[import]
+        page_limit = 8
+
+        print("Writing paper...")
+        perform_writeup(
+            base_folder=folder,
+            num_cite_rounds=args.num_cite_rounds,
+            small_model=args.model_citation,
+            big_model=args.model_writeup,
+            page_limit=page_limit,
+        )
+
+    if not args.skip_review:
+        import glob
+        from ai_scientist.llm import create_client
+        from ai_scientist.perform_llm_review import load_paper, perform_review
+
+        pdfs = sorted(glob.glob(os.path.join(folder, "*.pdf")))
+        if pdfs:
+            pdf_path = pdfs[-1]
+            paper_content = load_paper(pdf_path)
+            client, client_model = create_client(args.model_writeup)
+            review = perform_review(paper_content, client_model, client)
+            review_path = os.path.join(folder, "review.json")
+            with open(review_path, "w", encoding="utf-8") as f:
+                json.dump(review, f, indent=2)
+            print(f"Review saved to {review_path}")
+        else:
+            print("No PDF found to review.")
+
+
+if __name__ == "__main__":
+    main()
