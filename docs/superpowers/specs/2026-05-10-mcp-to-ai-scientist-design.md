@@ -52,29 +52,43 @@ User runs generate_ideas_from_mcp.py
   ├─ For each open question (up to --max-questions):
   │    │
   │    ├─ Semantic Scholar search_for_papers(open_question, limit=--s2-papers)
-  │    │    Returns: [{title, authors, year, venue, abstract, citationCount}]
+  │    │    Returns: [{title, authors, year, venue, abstract, citationStyles,
+  │    │              citationCount}]
   │    │    Purpose: determine whether the gap is real or just absent from
   │    │             the personal knowledge base
+  │    │    Side-effect: collect BibTeX strings from citationStyles.bibtex
+  │    │                 for each returned paper → stored as _s2_bibtex
   │    │
   │    └─ LLM (Ollama) receives: topic context + key_findings + open_question
   │                               + Semantic Scholar results
   │         Instruction: assess novelty; if question already answered, refine
   │         to identify the genuine remaining gap (population, setting, method)
   │         → structured AI Scientist idea JSON with grounded Related Work
+  │         Idea dict also carries two private keys (stripped before AI Scientist
+  │         sees the idea):
+  │           _mcp_topic: full get_topic() response (for Option B)
+  │           _s2_bibtex: list of BibTeX strings from novelty check papers
   │
   └─ Write/append → ai_scientist/ideas/mcp_generated.json
 
 User runs launch_proposal_writer.py
   │
+  ├─ os.chdir() to project root (required: perform_writeup uses relative paths)
   ├─ Load ideas JSON, select by --idea_idx
+  ├─ Pop _mcp_topic  → write to experiment folder as topic_data.json
+  ├─ Pop _s2_bibtex  → write cached_citations.bib + citations_progress.json
+  │    (gather_citations() skips its ML-biased loop when both files exist)
   ├─ Create experiments/<date>_<name>_proposal_<attempt_id>/
-  ├─ idea_to_markdown() → idea.md  [reuses existing bfts_utils function]
+  ├─ idea_to_markdown(idea, path, None) → idea.md
+  │    [third arg is required positional; pass None to skip code injection]
   ├─ Append "Writing Instructions" block to idea.md
-  ├─ Save idea.json
+  ├─ Save idea.json (AI Scientist fields only, private keys already removed)
   │
-  ├─ gather_citations(idea_dir, ...)   [existing function, Semantic Scholar]
-  ├─ perform_icbinb_writeup(...) or perform_writeup(...)   [existing function]
-  │    ↳ experiment summary files are absent → treated as empty dicts (graceful)
+  ├─ gather_citations(idea_dir, ...)
+  │    ↳ cached_citations.bib already present → loads cache, skips ML prompt
+  ├─ perform_icbinb_writeup(...) or perform_writeup(...)
+  │    ↳ experiment summary files absent → treated as empty dicts (graceful)
+  │    ↳ figures/ absent → plot_names = [] (graceful)
   │
   └─ PDF → experiments/<date>_<name>_proposal_<attempt_id>/<name>.pdf
 ```
@@ -164,7 +178,7 @@ Return only the JSON object, no other text.
 
 ### Output Format
 
-Standard AI Scientist ideas JSON — a list of objects, one per translated question:
+AI Scientist ideas JSON — a list of objects, one per translated question. Each object carries the standard AI Scientist fields plus two private keys used by `launch_proposal_writer.py` and stripped before any AI Scientist function sees the idea:
 
 ```json
 [
@@ -175,10 +189,24 @@ Standard AI Scientist ideas JSON — a list of objects, one per translated quest
     "Related Work": "...",
     "Abstract": "...",
     "Experiments": ["...", "..."],
-    "Risk Factors and Limitations": ["...", "..."]
+    "Risk Factors and Limitations": ["...", "..."],
+    "_mcp_topic": {
+      "slug": "therapeutic-clowning",
+      "title": "...",
+      "key_findings": ["..."],
+      "body": "...",
+      "sources": ["..."]
+    },
+    "_s2_bibtex": [
+      "@article{smith2021, title={...}, ...}",
+      "..."
+    ]
   }
 ]
 ```
+
+`_mcp_topic` is preserved for Option B (synthetic experiment summary injection).  
+`_s2_bibtex` is used immediately by `launch_proposal_writer.py` to pre-populate `cached_citations.bib`, bypassing the ML-biased citation gathering prompt.
 
 ---
 
@@ -195,7 +223,7 @@ Standard AI Scientist ideas JSON — a list of objects, one per translated quest
 | `--num_cite_rounds INT` | `10` | Semantic Scholar citation rounds |
 | `--writeup-type TEXT` | `icbinb` | `icbinb` (4-page) or `normal` (8-page) |
 | `--attempt_id INT` | `0` | Disambiguates parallel runs |
-| `--skip_review` | False | Skip LLM peer review step |
+| `--skip_review` | **True** | Skip LLM peer review (default on: no figures to review in proposal mode) |
 
 ### Proposal Note Appended to `idea.md`
 
@@ -216,14 +244,23 @@ Use the future tense for proposed work.
 
 ```
 experiments/<date>_<name>_proposal_<attempt_id>/
-  idea.md          ← from idea_to_markdown() + proposal note
-  idea.json        ← raw idea dict
-  cached_citations.bib    ← written by gather_citations()
-  latex/           ← written by perform_writeup()
-  <name>.pdf       ← final output
+  idea.md                  ← idea_to_markdown(idea, path, None) + proposal note
+  idea.json                ← AI Scientist fields only (private keys stripped)
+  topic_data.json          ← full MCP get_topic() response (Option B input)
+  cached_citations.bib     ← pre-populated from _s2_bibtex before writeup runs
+  citations_progress.json  ← {"completed_rounds": <num_cite_rounds>}
+                              signals gather_citations() to skip its loop
+  latex/                   ← written by perform_writeup()
+  <name>.pdf               ← final output
 ```
 
-No `logs/` directory is created. The writeup functions tolerate absent experiment summary files and silently use empty dicts.
+No `logs/` directory is created. Experiment summary files are absent; `load_exp_summaries()` returns empty dicts gracefully. `figures/` is absent; `plot_names = []` gracefully.
+
+### BibTeX Pre-population Detail
+
+`perform_icbinb_writeup.gather_citations()` checks for both `cached_citations.bib` and `citations_progress.json` at startup. If both exist it loads the cached BibTeX and returns immediately, skipping its internal loop entirely. That loop uses a hardcoded system prompt framed around ML/deep learning research (line 342 of `perform_icbinb_writeup.py`) — pre-populating the cache from the S2 novelty check papers sidesteps this entirely.
+
+BibTeX strings are taken from `paper['citationStyles']['bibtex']` when present. If a paper lacks that field, a minimal entry is constructed from `title`, `authors`, `year`, and `venue`.
 
 ---
 
@@ -284,23 +321,39 @@ python generate_ideas_from_mcp.py \
   --model ollama/qwen3.5:9b-q8_0 \
   --output ai_scientist/ideas/elder_clowning.json
 
-# Write proposal for first idea
+# Write proposal for first idea (run from project root)
 python launch_proposal_writer.py \
   --load_ideas ai_scientist/ideas/elder_clowning.json \
   --idea_idx 0 \
   --model_writeup ollama/qwen2.5:14b \
   --model_citation ollama/qwen2.5:14b \
   --num_cite_rounds 10
+  # --skip_review is True by default; pass --no-skip-review to enable LLM peer review
 ```
 
 Expected output: `experiments/<timestamp>_elder_clowning_mechanisms_proposal_0/<name>.pdf`
 
 ---
 
+## Option B Readiness
+
+Option B adds synthetic experiment summaries built from MCP `key_findings`, giving the writeup LLM structured "results" to report rather than empty dicts. Everything needed is already in place from Option A:
+
+| Option B need | Where it comes from |
+|---|---|
+| Topic key_findings, body, sources | `topic_data.json` in experiment folder |
+| Expected summary JSON schema | `{"best node": {"overall_plan": ..., "analysis": ..., "metric": {}}}` inside `BASELINE_SUMMARY` / `RESEARCH_SUMMARY` |
+| File paths to write | `logs/0-run/research_summary.json`, `logs/0-run/baseline_summary.json` |
+| `key_findings` mapping | `analysis` field in the summary node |
+| `body` mapping | `overall_plan` field in the summary node |
+
+Option B implementation: a function `write_synthetic_summaries(experiment_folder)` that reads `topic_data.json` and writes the two summary JSONs in the format `filter_experiment_summaries()` expects. No other changes.
+
+---
+
 ## Out of Scope (Future Work)
 
 - Computational experiment execution on Daylio / sensor data
-- Synthetic experiment summary injection (Option B) for richer paper structure
 - VLM figure review (`qwen2.5vl:7b` available when needed)
 - Batch processing of all ideas in a JSON file without manual `--idea_idx`
 - Perplexity API integration for live literature search
