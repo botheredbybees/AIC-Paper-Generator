@@ -33,13 +33,20 @@ def extract_sections(
     try:
         if source.startswith("http://") or source.startswith("https://"):
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+            fd_consumed = False
             try:
                 r = requests.get(source, timeout=30)
                 r.raise_for_status()
                 with os.fdopen(tmp_fd, "wb") as f:
+                    fd_consumed = True
                     f.write(r.content)
                 text = _extract_text(tmp_path)
             finally:
+                if not fd_consumed:
+                    try:
+                        os.close(tmp_fd)
+                    except OSError:
+                        pass
                 try:
                     os.unlink(tmp_path)
                 except OSError:
@@ -54,8 +61,8 @@ def extract_sections(
 
 def _extract_text(path: str) -> str:
     import fitz  # PyMuPDF — available via pymupdf4llm in requirements.txt
-    doc = fitz.open(path)
-    return "\n".join(page.get_text() for page in doc)
+    with fitz.open(path) as doc:
+        return "\n".join(page.get_text() for page in doc)
 
 
 def _find_sections(
@@ -64,7 +71,11 @@ def _find_sections(
     max_chars: int,
     citation_key: str,
 ) -> dict[str, str]:
-    """Pure function: find named sections in extracted PDF text."""
+    """Pure function: find named sections in extracted PDF text.
+
+    Note: numbered headings like "3 Discussion" are not matched — the heading
+    must occupy its own line with no prefix.
+    """
     lines = text.splitlines()
     patterns = {
         s: re.compile(rf"^\s*{re.escape(s)}\s*$", re.IGNORECASE)
@@ -90,13 +101,7 @@ def _find_sections(
                 line = lines[j]
                 # Stop at next heading (but not the same heading we're in)
                 if heading_re.match(line) and line.strip().lower() != lines[i].strip().lower():
-                    # Check if this line is any of our target sections or looks like a heading
-                    is_other_heading = any(
-                        p.match(line) for name, p in patterns.items()
-                        if name != matched_section
-                    ) or (heading_re.match(line) and len(line.strip()) < 60)
-                    if is_other_heading:
-                        break
+                    break
                 buf.append(line)
                 chars += len(line)
                 if chars >= max_chars:

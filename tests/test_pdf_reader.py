@@ -98,7 +98,6 @@ def test_extract_sections_local_path(tmp_path):
 
 
 def test_extract_sections_url(tmp_path):
-    import io
     fake_content = b"%PDF fake content"
 
     with patch("requests.get") as mock_get, \
