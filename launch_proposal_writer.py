@@ -307,9 +307,10 @@ def main() -> None:
                     tier2[citation_key] = sections
                     print(f"  [PDF] {citation_key}: {list(sections.keys())}")
 
-        # Add OA fulltext from Stage 1 into Tier 2
+        # Add OA fulltext from Stage 1 into Tier 2 (don't overwrite manual PDFs)
         for ck, sections in (idea.get("_oa_fulltext") or {}).items():
-            tier2[ck] = sections
+            if ck not in tier2:
+                tier2[ck] = sections
 
         # Tier 3: all S2 abstracts
         tier3 = idea.get("_s2_papers") or []
@@ -320,6 +321,9 @@ def main() -> None:
 
         print(f"\n[STAGE 4/5] Writing qualitative literature review "
               f"(writeup_model={args.model_writeup})")
+        if perform_review_writeup is None:
+            print("Error: ai_scientist/perform_review_writeup.py is missing or failed to import.", file=sys.stderr)
+            sys.exit(1)
         perform_review_writeup(
             base_folder=folder,
             idea=clean_idea,

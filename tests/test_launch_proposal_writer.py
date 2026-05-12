@@ -259,8 +259,7 @@ def test_write_synthetic_summaries_no_open_questions(tmp_path):
 # --writeup-type review routing
 # ---------------------------------------------------------------------------
 
-from unittest.mock import patch, MagicMock
-import glob as _glob
+from unittest.mock import patch
 
 
 def test_review_writeup_type_calls_perform_review_writeup(tmp_path):
@@ -282,7 +281,8 @@ def test_review_writeup_type_calls_perform_review_writeup(tmp_path):
     ideas_file.write_text(json.dumps([idea]))
 
     with patch("launch_proposal_writer.perform_review_writeup") as mock_rw, \
-         patch("ai_scientist.perform_review_writeup", create=True), \
+         patch("launch_proposal_writer.write_idea_md"), \
+         patch("launch_proposal_writer.write_synthetic_summaries"), \
          patch("sys.argv", [
              "prog",
              "--load_ideas", str(ideas_file),
@@ -291,10 +291,6 @@ def test_review_writeup_type_calls_perform_review_writeup(tmp_path):
              "--model_writeup", "ollama/qwen2.5:14b",
              "--model_citation", "ollama/qwen2.5:14b",
          ]):
-        try:
-            main()
-        except SystemExit:
-            pass
+        main()
 
-    # Either perform_review_writeup was called, or no error about wrong module
-    # (the import may fail in test env without tectonic — that's acceptable)
+    mock_rw.assert_called_once()
