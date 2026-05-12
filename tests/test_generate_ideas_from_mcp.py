@@ -450,3 +450,120 @@ def test_attach_private_keys_adds_mcp_topic_and_bibtex():
     assert "@article{x" in result["_s2_bibtex"][0]
     # Original idea fields still present
     assert result["Name"] == "test"
+
+
+# ---------------------------------------------------------------------------
+# Recursive S2 expansion helpers
+# ---------------------------------------------------------------------------
+
+from generate_ideas_from_mcp import (
+    expand_papers_recursively,
+    classify_papers,
+    write_library_list,
+)
+
+
+def _make_paper(paper_id: str, is_oa: bool = False, doi: str | None = None) -> dict:
+    return {
+        "paperId": paper_id,
+        "title": f"Paper {paper_id}",
+        "authors": [{"name": "Author A"}],
+        "year": 2022,
+        "abstract": "An abstract.",
+        "citationCount": 10,
+        "isOpenAccess": is_oa,
+        "openAccessPdf": {"url": f"https://example.com/{paper_id}.pdf"} if is_oa else None,
+        "externalIds": {"DOI": doi} if doi else {},
+    }
+
+
+def test_expand_papers_deduplicates_by_paper_id():
+    seeds = [_make_paper("seed1"), _make_paper("seed2")]
+    # Both seeds share the same citation
+    shared = _make_paper("shared_citation")
+
+    with patch("generate_ideas_from_mcp.fetch_paper_citations", return_value=[shared]), \
+         patch("generate_ideas_from_mcp.fetch_paper_references", return_value=[]):
+        result = expand_papers_recursively(seeds, max_papers=100)
+
+    paper_ids = [p["paperId"] for p in result]
+    assert paper_ids.count("shared_citation") == 1
+
+
+def test_expand_papers_respects_max_cap():
+    seeds = [_make_paper("seed1")]
+    many_papers = [_make_paper(f"p{i}") for i in range(200)]
+
+    with patch("generate_ideas_from_mcp.fetch_paper_citations", return_value=many_papers), \
+         patch("generate_ideas_from_mcp.fetch_paper_references", return_value=[]):
+        result = expand_papers_recursively(seeds, max_papers=50)
+
+    assert len(result) <= 50
+
+
+def test_expand_papers_includes_seeds():
+    seeds = [_make_paper("seed1")]
+    with patch("generate_ideas_from_mcp.fetch_paper_citations", return_value=[]), \
+         patch("generate_ideas_from_mcp.fetch_paper_references", return_value=[]):
+        result = expand_papers_recursively(seeds, max_papers=100)
+
+    paper_ids = [p["paperId"] for p in result]
+    assert "seed1" in paper_ids
+
+
+def test_classify_papers_splits_by_open_access():
+    papers = [
+        _make_paper("oa1", is_oa=True),
+        _make_paper("oa2", is_oa=True),
+        _make_paper("pw1", is_oa=False),
+    ]
+    oa, paywalled = classify_papers(papers)
+    assert len(oa) == 2
+    assert len(paywalled) == 1
+    assert all(p["isOpenAccess"] for p in oa)
+    assert not paywalled[0]["isOpenAccess"]
+
+
+def test_write_library_list_creates_file(tmp_path):
+    paywalled = [
+        _make_paper("pw1", doi="10.1234/test"),
+        _make_paper("pw2"),  # no DOI
+    ]
+    out = tmp_path / "to_fetch_from_library.md"
+    write_library_list(paywalled, str(out))
+
+    assert out.exists()
+    content = out.read_text()
+    assert "Paywalled Papers" in content
+
+
+def test_write_library_list_doi_uses_ezproxy(tmp_path):
+    paywalled = [_make_paper("pw1", doi="10.1234/test")]
+    out = tmp_path / "to_fetch_from_library.md"
+    write_library_list(paywalled, str(out))
+
+    content = out.read_text()
+    assert "ezproxy.utas.edu.au" in content
+    assert "10.1234/test" in content
+
+
+def test_write_library_list_no_doi_uses_primo(tmp_path):
+    paywalled = [_make_paper("pw2")]  # no DOI
+    out = tmp_path / "to_fetch_from_library.md"
+    write_library_list(paywalled, str(out))
+
+    content = out.read_text()
+    assert "utas.primo.exlibrisgroup.com" in content
+
+
+def test_write_library_list_suggested_filename(tmp_path):
+    paywalled = [{"paperId": "x", "title": "Arts in Health Care",
+                  "authors": [{"name": "Smith, J."}], "year": 2022,
+                  "isOpenAccess": False, "externalIds": {"DOI": "10.1/x"},
+                  "citationCount": 5, "abstract": "",
+                  "openAccessPdf": None}]
+    out = tmp_path / "to_fetch_from_library.md"
+    write_library_list(paywalled, str(out))
+
+    content = out.read_text()
+    assert "Smith_2022" in content or "smith_2022" in content.lower()

@@ -27,7 +27,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 from ai_scientist.llm import create_client, extract_json_between_markers, get_response_from_llm
-from ai_scientist.tools.semantic_scholar import search_for_papers
+from ai_scientist.tools.semantic_scholar import fetch_paper_citations, fetch_paper_references, search_for_papers, utas_library_url
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +250,101 @@ def translate_to_idea(
         return None
     print(f"[LLM] Idea extracted: Name={result.get('Name')!r}")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Recursive S2 expansion
+# ---------------------------------------------------------------------------
+
+def expand_papers_recursively(
+    seed_papers: list[dict],
+    max_papers: int = 100,
+) -> list[dict]:
+    """
+    Given seed papers from the initial S2 search, fetch their forward citations
+    and backward references, deduplicate by paperId, and return up to max_papers
+    sorted by citationCount descending. Seeds are always included.
+    """
+    seen: dict[str, dict] = {}
+
+    # Seed papers go in first
+    for p in seed_papers:
+        pid = p.get("paperId")
+        if pid and pid not in seen:
+            seen[pid] = p
+
+    # Traverse citations + references for each seed
+    for p in seed_papers:
+        pid = p.get("paperId")
+        if not pid:
+            continue
+        print(f"    [S2] Fetching citations for {pid!r}")
+        for related in fetch_paper_citations(pid, limit=50):
+            rpid = related.get("paperId")
+            if rpid and rpid not in seen:
+                seen[rpid] = related
+        print(f"    [S2] Fetching references for {pid!r}")
+        for related in fetch_paper_references(pid, limit=50):
+            rpid = related.get("paperId")
+            if rpid and rpid not in seen:
+                seen[rpid] = related
+
+    # Sort by citationCount descending, cap at max_papers
+    all_papers = sorted(seen.values(), key=lambda p: p.get("citationCount") or 0, reverse=True)
+    return all_papers[:max_papers]
+
+
+def classify_papers(papers: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split papers into (open_access, paywalled) buckets."""
+    oa = [p for p in papers if p.get("isOpenAccess")]
+    paywalled = [p for p in papers if not p.get("isOpenAccess")]
+    return oa, paywalled
+
+
+def write_library_list(paywalled: list[dict], output_path: str) -> None:
+    """Write a Markdown shopping list of paywalled papers with UTAS library links."""
+    lines = [
+        "# Papers Requiring Manual Library Download\n",
+        "These papers were identified as highly relevant but are not open access.\n"
+        "Retrieve them via UTAS Library using the links below, then save PDFs to the\n"
+        "`pdfs/` folder alongside your ideas JSON file.\n",
+        "## Paywalled Papers\n",
+    ]
+
+    for p in paywalled:
+        title = p.get("title") or "Unknown Title"
+        authors = p.get("authors") or []
+        year = p.get("year") or "unknown"
+        doi = (p.get("externalIds") or {}).get("DOI")
+
+        first_author = ""
+        if authors:
+            name = authors[0].get("name") or ""
+            parts = name.replace(",", " ").split()
+            first_author = parts[0] if parts else "Unknown"
+
+        safe_title = re.sub(r"[^\w\s]", "", title)[:40].strip().replace(" ", "_")
+        suggested = f"{first_author}_{year}_{safe_title}.pdf"
+
+        author_str = " & ".join(a.get("name", "") for a in authors[:3])
+        if len(authors) > 3:
+            author_str += " et al."
+
+        library_url = utas_library_url(doi=doi, title=title if not doi else None)
+        link_label = "Library link" if doi else "Library search"
+
+        lines.extend([
+            f"- **Title:** {title}",
+            f"  - Authors: {author_str} ({year})",
+            f"  - Reason: paywalled (isOpenAccess=False)",
+            f"  - {link_label}: {library_url}",
+            f"  - Suggested filename: `{suggested}`",
+            "",
+        ])
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_text("\n".join(lines), encoding="utf-8")
+    print(f"[Library] Wrote {len(paywalled)} paywalled paper(s) to {output_path}")
 
 
 def attach_private_keys(idea: dict, topic: dict, s2_papers: list[dict]) -> dict:
