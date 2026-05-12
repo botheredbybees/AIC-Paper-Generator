@@ -43,10 +43,14 @@ Stage 1  generate_ideas_from_mcp.py  [--recursive]
 
 Stage 2  launch_proposal_writer.py  [--writeup-type review]
   ├── Reads ideas JSON
-  ├── Scans pdfs/ folder → pdf_reader.extract_sections() on each manual PDF  ← NEW
-  ├── Merges OA fulltext + manual PDF text into "extended_context"
+  ├── Scans pdfs/ folder → pdf_reader.extract_sections(citation_key=...) per PDF  ← NEW
+  ├── Builds tiered context:
+  │     Tier 1 (Anchor):   _mcp_topic.body  (full synthesis)
+  │     Tier 2 (Evidence): manual PDFs — Discussion/Findings/Participant Voices
+  │     Tier 3 (Map):      OA abstracts + S2 abstracts
   └── perform_review_writeup.py  ← NEW
-        Fills 6 APA 7 placeholders in blank_review_latex/template.tex
+        [small_model] Thematic pre-clustering: 100 abstracts → 5-7 themes
+        [big_model]   Fills 6 APA 7 placeholders, themes as structural scaffold
         Qualitative persona — synthesises experiences, methodologies, thematic gaps
         Compiles via tectonic → PDF
 ```
@@ -73,8 +77,23 @@ def extract_sections(source: str, sections: list[str], max_chars: int = 4000) ->
 Implementation notes:
 - Fetch URL to a `tempfile.NamedTemporaryFile` before extraction
 - Use `pdfminer.six` for text extraction (`pdfminer.high_level.extract_text`)
+- Default section list covers both clinical and qualitative research styles:
+  `["Discussion", "Results", "Findings", "Participant Voices",
+    "Narrative Synthesis", "Methodological Considerations", "Conclusion"]`
 - Section detection: scan for lines matching `r"^\s*(section_name)\s*$"` (case-insensitive);
   capture text until next heading or max_chars, whichever comes first
+- **Citation key prefix**: prepend `[AuthorYear]` to every extracted block so the LLM
+  can always trace text back to its source paper. Format: `[{first_author_surname}{year}]`
+  derived from the paper metadata passed alongside the URL/path.
+  Signature becomes:
+  ```python
+  def extract_sections(
+      source: str,
+      sections: list[str] | None = None,   # None → use default list above
+      max_chars: int = 4000,
+      citation_key: str = "",              # e.g. "Smith2022" — prepended to each block
+  ) -> dict[str, str]:
+  ```
 - If extraction fails (corrupt PDF, network error), return `{}` — never raise
 
 Dependency to add to `requirements.txt`: `pdfminer.six`
@@ -102,6 +121,30 @@ no experiment-results dependency.
 | `PRACTICE_PLACEHOLDER` | idea["Experiments"] | Community-based application |
 | `CONCLUSION_PLACEHOLDER` | idea["Risk Factors and Limitations"] + open_questions | Future directions |
 
+**Tiered context strategy** — source material is passed to the LLM in three priority tiers
+to avoid context drowning while maximising qualitative depth:
+
+| Tier | Source | Content included | Purpose |
+|---|---|---|---|
+| Tier 1 — Anchor | MCP `_mcp_topic.body` | Full synthesis text | Sets narrative tone and open question |
+| Tier 2 — Evidence | Manual PDFs (`pdfs/`) | Discussion, Findings, Participant Voices sections | Core qualitative insights |
+| Tier 3 — Map | OA papers + S2 abstracts | Abstracts + Conclusions only | Thematic field map |
+
+**Thematic pre-clustering step** (small model, runs before big-model writeup):
+
+Before invoking the big model for each placeholder, a lightweight clustering pass runs
+over all ≤100 paper abstracts using `small_model`:
+
+> Given these abstracts, identify 5–7 recurring thematic clusters in this field of
+> research. Return a numbered list of cluster names with a one-sentence description each.
+
+The cluster list is injected into the `LIT_REVIEW_PLACEHOLDER` and `ANALYSIS_PLACEHOLDER`
+prompts as a structural scaffold, guiding the big model to organise the review logically
+rather than producing a flat chronological summary.
+
+This adds one extra LLM call (small model, cheap) and prevents the "generic summary" failure
+mode where the big model treats 100 papers as undifferentiated context.
+
 **Persona system message:**
 
 > You are a qualitative researcher in Creative Arts and Health writing an academic
@@ -120,10 +163,12 @@ no experiment-results dependency.
 ```python
 def perform_review_writeup(
     base_folder: str,
-    idea: dict,            # clean idea dict (no _ keys)
-    extended_context: dict, # {section_label: text} merged OA + manual PDF
+    idea: dict,             # clean idea dict (no _ keys)
+    tier1_synthesis: str,   # _mcp_topic.body — full synthesis text
+    tier2_fulltext: dict,   # {citation_key: {section: text}} — manual PDFs
+    tier3_abstracts: list,  # [{title, abstract, year, authors}, ...] — OA + S2
     big_model: str,
-    small_model: str,
+    small_model: str,       # used for thematic pre-clustering pass
 ) -> None:
 ```
 
@@ -189,24 +234,30 @@ if args.writeup_type == "review":
     from ai_scientist.perform_review_writeup import perform_review_writeup
     from ai_scientist.tools.pdf_reader import extract_sections
 
-    # Scan pdfs/ folder for manually added PDFs
+    # Tier 1: MCP synthesis
+    tier1 = (idea.get("_mcp_topic") or {}).get("body", "")
+
+    # Tier 2: manual PDFs from pdfs/ folder (Discussion, Findings, Participant Voices)
     pdf_dir = os.path.join(os.path.dirname(args.load_ideas), "pdfs")
-    extended_context = {}
+    tier2 = {}
     if os.path.isdir(pdf_dir):
         for pdf_path in glob.glob(os.path.join(pdf_dir, "*.pdf")):
-            label = Path(pdf_path).stem
-            extended_context[label] = extract_sections(
-                pdf_path, ["Discussion", "Results", "Findings"]
-            )
+            citation_key = Path(pdf_path).stem   # e.g. "Smith2022"
+            tier2[citation_key] = extract_sections(pdf_path, citation_key=citation_key)
 
-    # Merge OA fulltext from ideas JSON
-    for paper_id, sections in (idea.get("_oa_fulltext") or {}).items():
-        extended_context[paper_id] = sections
+    # Also add OA fulltext from Stage 1 into Tier 2 (it already has citation keys)
+    for ck, sections in (idea.get("_oa_fulltext") or {}).items():
+        tier2[ck] = sections
+
+    # Tier 3: all S2 abstracts (OA + paywalled)
+    tier3 = idea.get("_s2_papers") or []
 
     perform_review_writeup(
         base_folder=folder,
         idea=clean_idea,
-        extended_context=extended_context,
+        tier1_synthesis=tier1,
+        tier2_fulltext=tier2,
+        tier3_abstracts=tier3,
         big_model=args.model_writeup,
         small_model=args.model_citation,
     )
