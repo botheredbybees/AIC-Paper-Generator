@@ -172,3 +172,34 @@ def test_perform_review_writeup_invokes_tectonic(tmp_path):
     assert mock_sub.called
     cmd = mock_sub.call_args[0][0]
     assert "tectonic" in cmd[0] or "tectonic" in str(cmd)
+
+
+# ---------------------------------------------------------------------------
+# _latex_safe
+# ---------------------------------------------------------------------------
+
+from ai_scientist.perform_review_writeup import _latex_safe
+
+
+def test_latex_safe_escapes_ampersand():
+    assert _latex_safe("Smith & Jones") == r"Smith \& Jones"
+
+
+def test_latex_safe_escapes_percent():
+    assert _latex_safe("50% compliance") == r"50\% compliance"
+
+
+def test_latex_safe_escapes_backslash_without_double_escaping():
+    result = _latex_safe("C:\\Users")
+    assert result == r"C:\textbackslash{}Users"
+    # braces from \textbackslash{} must NOT be further escaped
+    assert r"\{" not in result.replace(r"\textbackslash{}", "REPLACED")
+
+
+def test_latex_safe_plain_text_unchanged():
+    assert _latex_safe("Hello world") == "Hello world"
+
+
+def test_latex_safe_braces():
+    result = _latex_safe("{hello}")
+    assert result == r"\{hello\}"

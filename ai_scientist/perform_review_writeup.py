@@ -129,6 +129,7 @@ def fill_placeholder(
 
 def _make_bibtex(papers: list[dict]) -> str:
     """Generate a minimal references.bib from S2 paper dicts."""
+    # Lazy import to avoid circular imports; requires repo root on sys.path
     from generate_ideas_from_mcp import bibtex_from_s2_paper  # reuse existing utility
     entries = []
     seen: set[str] = set()
@@ -282,20 +283,24 @@ def perform_review_writeup(
         print(f"[Review] PDF: {pdf}")
 
 
+_LATEX_ESCAPE_MAP = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+}
+
+
 def _latex_safe(text: str) -> str:
-    """Escape special LaTeX characters in plain text."""
-    replacements = [
-        ("\\", "\\textbackslash{}"),
-        ("&", "\\&"),
-        ("%", "\\%"),
-        ("$", "\\$"),
-        ("#", "\\#"),
-        ("_", "\\_"),
-        ("{", "\\{"),
-        ("}", "\\}"),
-        ("~", "\\textasciitilde{}"),
-        ("^", "\\textasciicircum{}"),
-    ]
-    for char, escaped in replacements:
-        text = text.replace(char, escaped)
-    return text
+    """Escape special LaTeX characters in a single pass to avoid double-escaping."""
+    return re.sub(
+        r'[\\&%$#_{}~^]',
+        lambda m: _LATEX_ESCAPE_MAP[m.group()],
+        text
+    )
