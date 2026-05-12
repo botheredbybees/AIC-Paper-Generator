@@ -433,7 +433,6 @@ async def _main(args: argparse.Namespace) -> None:
             print(f"  [{qi}/{len(questions)}] {question[:100]}")
 
             s2_papers: list[dict] = []
-            paywalled_papers: list[dict] = []
             oa_fulltext: dict[str, dict] = {}
             if not args.no_novelty_check:
                 print(f"    [S2] Searching Semantic Scholar...")
@@ -487,7 +486,8 @@ async def _main(args: argparse.Namespace) -> None:
                 if pid and pid not in seen_ids:
                     seen_ids.add(pid)
                     all_paywalled.append(p)
-        write_library_list(all_paywalled, library_list_path)
+        if all_paywalled:
+            write_library_list(all_paywalled, library_list_path)
 
     if args.append and os.path.exists(args.output):
         try:
