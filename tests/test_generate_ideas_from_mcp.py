@@ -567,3 +567,70 @@ def test_write_library_list_suggested_filename(tmp_path):
 
     content = out.read_text()
     assert "Smith_2022" in content or "smith_2022" in content.lower()
+
+
+# ---------------------------------------------------------------------------
+# CLI flag wiring for --recursive and --fetch-fulltext
+# ---------------------------------------------------------------------------
+
+import argparse
+from generate_ideas_from_mcp import parse_args, _main
+
+
+def test_parse_args_recursive_defaults_false(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["prog", "--query", "test"])
+    args = parse_args()
+    assert args.recursive is False
+
+
+def test_parse_args_recursive_flag_sets_true(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["prog", "--query", "test", "--recursive"])
+    args = parse_args()
+    assert args.recursive is True
+
+
+def test_parse_args_max_papers_default(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["prog", "--query", "test"])
+    args = parse_args()
+    assert args.max_papers == 100
+
+
+def test_parse_args_fetch_fulltext_defaults_false(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["prog", "--query", "test"])
+    args = parse_args()
+    assert args.fetch_fulltext is False
+
+
+def test_ideas_json_has_s2_papers_key_after_recursive(tmp_path, monkeypatch):
+    """When --recursive is used, ideas JSON gets _s2_papers, _paywalled, _oa_fulltext."""
+    import json, asyncio
+    from unittest.mock import AsyncMock, patch as upatch
+
+    seed = _make_paper("seed1", is_oa=True, doi="10.1/x")
+    topic = {
+        "slug": "test-topic", "title": "Test Topic", "domain": "intervention",
+        "confidence": "medium", "key_findings": ["F1"], "open_questions": ["Q1?"],
+        "body": "Synthesis text.", "sources": [],
+    }
+
+    with upatch("generate_ideas_from_mcp.fetch_mcp_topics", new=AsyncMock(return_value=[topic])), \
+         upatch("generate_ideas_from_mcp.search_for_papers", return_value=[seed]), \
+         upatch("generate_ideas_from_mcp.expand_papers_recursively", return_value=[seed]), \
+         upatch("generate_ideas_from_mcp.translate_to_idea", return_value={
+             "Name": "test_idea", "Title": "T", "Short Hypothesis": "H",
+             "Related Work": "R", "Abstract": "A",
+             "Experiments": [], "Risk Factors and Limitations": [],
+         }):
+        output_file = tmp_path / "ideas.json"
+        monkeypatch.setattr("sys.argv", [
+            "prog", "--query", "test", "--recursive",
+            "--output", str(output_file), "--mcp-url", "http://localhost:8765/sse",
+        ])
+        args = parse_args()
+        asyncio.run(_main(args))
+
+    ideas = json.loads(output_file.read_text())
+    assert len(ideas) == 1
+    assert "_s2_papers" in ideas[0]
+    assert "_paywalled" in ideas[0]
+    assert "_oa_fulltext" in ideas[0]

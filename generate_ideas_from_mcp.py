@@ -347,11 +347,20 @@ def write_library_list(paywalled: list[dict], output_path: str) -> None:
     print(f"[Library] Wrote {len(paywalled)} paywalled paper(s) to {output_path}")
 
 
-def attach_private_keys(idea: dict, topic: dict, s2_papers: list[dict]) -> dict:
+def attach_private_keys(
+    idea: dict,
+    topic: dict,
+    s2_papers: list[dict],
+    paywalled: list[dict] | None = None,
+    oa_fulltext: dict | None = None,
+) -> dict:
     """Attach private metadata keys to an idea dict for downstream use."""
     result = dict(idea)
     result["_mcp_topic"] = topic
     result["_s2_bibtex"] = [bibtex_from_s2_paper(p) for p in (s2_papers or [])]
+    result["_s2_papers"] = s2_papers or []
+    result["_paywalled"] = paywalled or []
+    result["_oa_fulltext"] = oa_fulltext or {}
     return result
 
 
@@ -387,6 +396,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mcp-url",
                         default=os.environ.get("MCP_URL", "http://192.168.1.20:8765/sse"),
                         help="MCP server SSE endpoint URL")
+    parser.add_argument("--recursive", action="store_true", default=False,
+                        help="Expand seed papers via S2 citation/reference traversal")
+    parser.add_argument("--max-papers", type=int, default=100, dest="max_papers",
+                        help="Max total papers after recursive expansion (default: 100)")
+    parser.add_argument("--fetch-fulltext", action="store_true", default=False,
+                        dest="fetch_fulltext",
+                        help="Download and extract Discussion/Results from OA PDFs (requires --recursive)")
+    parser.add_argument("--library-list", default=None, dest="library_list",
+                        help="Path to write to_fetch_from_library.md (default: alongside --output)")
     return parser.parse_args()
 
 
@@ -415,10 +433,38 @@ async def _main(args: argparse.Namespace) -> None:
             print(f"  [{qi}/{len(questions)}] {question[:100]}")
 
             s2_papers: list[dict] = []
+            paywalled_papers: list[dict] = []
+            oa_fulltext: dict[str, dict] = {}
             if not args.no_novelty_check:
                 print(f"    [S2] Searching Semantic Scholar...")
-                s2_papers = search_for_papers(question, result_limit=args.s2_papers) or []
-                print(f"    [S2] {len(s2_papers)} paper(s) found")
+                seed_papers = search_for_papers(question, result_limit=args.s2_papers) or []
+                print(f"    [S2] {len(seed_papers)} seed paper(s) found")
+
+                if args.recursive and seed_papers:
+                    print(f"    [S2] Recursive expansion (cap={args.max_papers})...")
+                    s2_papers = expand_papers_recursively(seed_papers, max_papers=args.max_papers)
+                    print(f"    [S2] {len(s2_papers)} paper(s) after expansion")
+                else:
+                    s2_papers = seed_papers
+
+            oa_papers, paywalled_papers = classify_papers(s2_papers)
+
+            if args.fetch_fulltext and oa_papers:
+                from ai_scientist.tools.pdf_reader import extract_sections
+                print(f"    [PDF] Fetching full text from {len(oa_papers)} OA paper(s)...")
+                for p in oa_papers:
+                    oa_url = (p.get("openAccessPdf") or {}).get("url")
+                    if not oa_url:
+                        continue
+                    pid = p.get("paperId", "unknown")
+                    authors = p.get("authors") or []
+                    first = (authors[0].get("name") or "").split()[-1] if authors else "Unknown"
+                    year = str(p.get("year") or "0000")
+                    ck = f"{first}{year}"
+                    sections = extract_sections(oa_url, citation_key=ck)
+                    if sections:
+                        oa_fulltext[pid] = sections
+                        print(f"      [PDF] {ck}: {list(sections.keys())}")
 
             print(f"\n[STAGE 3/4] LLM idea translation (model={args.model})")
             idea = translate_to_idea(topic, question, s2_papers, args.model)
@@ -426,10 +472,22 @@ async def _main(args: argparse.Namespace) -> None:
                 print("    WARNING: LLM returned invalid JSON — skipping this question")
                 continue
 
-            ideas.append(attach_private_keys(idea, topic, s2_papers))
+            ideas.append(attach_private_keys(idea, topic, s2_papers, paywalled_papers, oa_fulltext))
             print(f"    Generated idea: {idea.get('Name', 'unknown')!r}")
 
     print(f"\n[STAGE 4/4] Writing output — {len(ideas)} idea(s) generated")
+
+    if any(idea.get("_paywalled") for idea in ideas):
+        library_list_path = args.library_list or str(Path(args.output).parent / "to_fetch_from_library.md")
+        all_paywalled = []
+        seen_ids: set[str] = set()
+        for idea in ideas:
+            for p in (idea.get("_paywalled") or []):
+                pid = p.get("paperId")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    all_paywalled.append(p)
+        write_library_list(all_paywalled, library_list_path)
 
     if args.append and os.path.exists(args.output):
         try:
