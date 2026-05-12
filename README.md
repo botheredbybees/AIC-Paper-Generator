@@ -32,7 +32,9 @@ This system autonomously generates hypotheses, runs experiments, analyzes data, 
     *   [Supported Models and API Keys](#supported-models-and-api-keys)
 2.  [Generate Research Ideas](#generate-research-ideas)
 3.  [Run AI Scientist-v2 Paper Generation Experiments](#run-ai-scientist-v2-paper-generation-experiments)
-4.  [MCP-to-Proposal Pipeline (Arts & Health Extension)](#mcp-to-proposal-pipeline-arts--health-extension)
+4.  [Arts & Health Extension](#arts--health-extension)
+    *   [Research Proposal Mode](#research-proposal-mode) (4-page ICBINB PDF from MCP knowledge base)
+    *   [Literature Review Mode](#literature-review-mode) (APA 7 qualitative review with recursive S2 traversal)
 5.  [Citing The AI Scientist-v2](#citing-the-ai-scientist-v2)
 6.  [Frequently Asked Questions](#frequently-asked-questions)
 7.  [Acknowledgement](#acknowledgement)
@@ -157,35 +159,18 @@ Once the initial experimental stage is complete, you will find a timestamped log
 After all experiment stages are complete, the writeup stage begins. The writeup stage typically takes about 20 to 30 minutes in total. Once it finishes, you should see `timestamp_ideaname.pdf` in the `timestamp_ideaname` folder.
 For this example run, all stages typically finish within several hours.
 
-## MCP-to-Proposal Pipeline (Arts & Health Extension)
+## Arts & Health Extension
 
-This fork extends AI Scientist-v2 with a two-script pipeline that generates 4-page ICBINB-format research proposals from a personal knowledge base — without running any ML experiments. The target use case is **arts and health research** (e.g. therapeutic clowning for older adults), where "experiments" are interviews, observational studies, and systematic reviews rather than Python training loops.
+This fork extends AI Scientist-v2 with a two-script pipeline that generates academic papers from a personal knowledge base — without running any ML experiments. The target use case is **arts and health research** (e.g. therapeutic clowning for older adults), where "experiments" are interviews, observational studies, and systematic reviews rather than Python training loops.
 
-### How It Works
+Two output modes are available:
 
-```
-a1c-knowledge MCP server          Semantic Scholar
-        │                                 │
-        ▼                                 │
-generate_ideas_from_mcp.py  ─────────────┘
-  • Queries MCP for topics with open research questions
-  • Checks each question against Semantic Scholar for novelty
-  • Translates surviving questions → AI Scientist idea JSON via Ollama
-  • Attaches pre-gathered BibTeX citations as private metadata
-        │
-        ▼  ai_scientist/ideas/<topic>.json
-        │
-launch_proposal_writer.py
-  • Strips private metadata, writes topic_data.json
-  • Pre-populates cached_citations.bib (bypasses ML-biased citation loop)
-  • Drives perform_icbinb_writeup to produce a 4-page PDF
-        │
-        ▼  experiments/<timestamp>_<name>_proposal_0/<name>.pdf
-```
+| Mode | Flag | Output | Use when |
+|---|---|---|---|
+| Research proposal | `--writeup-type icbinb` | 4-page ICBINB PDF | Pitching a study |
+| Literature review | `--writeup-type review` | APA 7 qualitative review PDF | Synthesising existing work |
 
-The experiment execution phase (`perform_experiments_bfts`) is skipped entirely. The writeup LLM is instructed to write a literature review and research proposal — not to report experimental results.
-
-### Installation (Proposal Pipeline Only)
+### Installation (Arts & Health Extension Only)
 
 This pipeline does not need CUDA, PyTorch, or conda. A plain Python virtualenv works.
 
@@ -205,20 +190,44 @@ printf '#!/bin/bash\necho "bibtex: handled by tectonic"; exit 0\n' > ~/bin/bibte
 chmod +x ~/bin/pdflatex ~/bin/bibtex
 ```
 
-Copy `.env.example` to `.env` and fill in your values (see [Environment Variables](#environment-variables) below).
+Copy `.env.example` to `.env` and fill in your values:
 
-### Quick Start
+```
+OLLAMA_BASE_URL=http://192.168.1.20:11434   # remote Ollama instance
+MCP_URL=http://localhost:8765/sse            # use localhost — IP address rejected by FastMCP host check
+S2_API_KEY=your_key_here                     # semanticscholar.org/product/api (1 req/sec authenticated)
+```
+
+> **MCP_URL note:** FastMCP 1.x rejects connections whose `Host` header contains a bare IP address. Always connect via `localhost` or a hostname.
+
+### Research Proposal Mode
+
+Generates a 4-page ICBINB-format research proposal from one open research question in the knowledge base.
+
+```
+a1c-knowledge MCP server          Semantic Scholar
+        │                                 │
+        ▼                                 │
+generate_ideas_from_mcp.py  ─────────────┘
+  • Queries MCP for topics with open research questions
+  • Checks each question against Semantic Scholar for novelty
+  • Translates surviving questions → AI Scientist idea JSON via Ollama
+  • Attaches pre-gathered BibTeX citations as private metadata
+        │
+        ▼  ai_scientist/ideas/<topic>.json
+        │
+launch_proposal_writer.py --writeup-type icbinb
+  • Strips private metadata, writes topic_data.json
+  • Pre-populates cached_citations.bib (bypasses ML-biased citation loop)
+  • Drives perform_icbinb_writeup to produce a 4-page PDF
+        │
+        ▼  experiments/<timestamp>_<name>_proposal_0/<name>.pdf
+```
 
 ```bash
-# Put tectonic shims on PATH
 export PATH="$HOME/bin:$PATH"
 
-# Credentials and endpoints — or set these in .env
-export OLLAMA_BASE_URL=http://<ollama-host>:11434
-export MCP_URL=http://localhost:8765/sse   # use localhost if MCP runs on this machine
-export S2_API_KEY=<your-key>               # recommended: 1 req/sec authenticated vs strict anon limits
-
-# 2. Generate ideas from the knowledge base
+# Stage 1: generate ideas (~1–3 min per topic, LLM-bound)
 python generate_ideas_from_mcp.py \
   --query "elder clowning therapeutic clowning older adults wellbeing" \
   --confidence high \
@@ -226,7 +235,7 @@ python generate_ideas_from_mcp.py \
   --model ollama/qwen2.5:14b \
   --output ai_scientist/ideas/elder_clowning.json
 
-# 3. Write a 4-page research proposal PDF
+# Stage 2: write proposal PDF (~2–5 min)
 python launch_proposal_writer.py \
   --load_ideas ai_scientist/ideas/elder_clowning.json \
   --idea_idx 0 \
@@ -237,54 +246,91 @@ python launch_proposal_writer.py \
 
 Output: `experiments/<timestamp>_<idea_name>_proposal_0/<name>_reflection1.pdf`
 
-### generate_ideas_from_mcp.py
+### Literature Review Mode
 
-Queries the [a1c-knowledge MCP server](https://github.com/botheredbybees/wiki-db) via SSE, checks each open research question against Semantic Scholar, and translates surviving questions to AI Scientist idea JSON using a local Ollama LLM.
+Generates a full APA 7 qualitative literature review using recursive Semantic Scholar traversal and a tiered context strategy that separates your synthesised notes, full-text PDFs you retrieved from the library, and S2 abstracts.
 
-Key arguments:
+```
+generate_ideas_from_mcp.py --recursive --fetch-fulltext --library-list ...
+  • Seed S2 search → fetch citations + references for each seed paper
+  • Classify: open-access bucket (download full text) vs paywalled bucket
+  • Write to_fetch_from_library.md with UTAS EZproxy / Primo links
+  • Attach _s2_papers, _oa_fulltext, _paywalled to the ideas JSON
+        │
+        ▼  ai_scientist/ideas/<topic>.json
+           ai_scientist/ideas/to_fetch_from_library.md   ← manual step: retrieve these
+        │
+        ▼  [manually save retrieved PDFs to ai_scientist/ideas/pdfs/]
+        │
+launch_proposal_writer.py --writeup-type review
+  • Tier 1 (Anchor):   MCP _mcp_topic.body — your synthesis notes
+  • Tier 2 (Evidence): Discussion / Findings / Participant Voices from manual + OA PDFs
+  • Tier 3 (Map):      Abstracts from all ≤100 S2 papers
+  • [small model] Thematic pre-clustering: 5–7 recurring themes across all abstracts
+  • [big model]   Fills 10 APA 7 placeholders in blank_review_latex/template.tex
+  • Compiles via tectonic → PDF
+        │
+        ▼  experiments/<timestamp>_<name>_proposal_0/template.pdf
+```
+
+```bash
+export PATH="$HOME/bin:$PATH"
+
+# Stage 1: generate ideas with recursive S2 expansion (~5–15 min depending on S2 rate limits)
+python generate_ideas_from_mcp.py \
+  --query "therapeutic clowning older adults wellbeing" \
+  --confidence high \
+  --model ollama/qwen2.5:14b \
+  --recursive \
+  --fetch-fulltext \
+  --library-list ai_scientist/ideas/to_fetch_from_library.md \
+  --output ai_scientist/ideas/elder_clowning.json
+
+# Stage 2 (manual): open to_fetch_from_library.md, retrieve paywalled PDFs via UTAS library,
+# save them to ai_scientist/ideas/pdfs/ using the suggested filenames.
+
+# Stage 3: write APA 7 literature review PDF (~5–15 min, LLM-bound)
+python launch_proposal_writer.py \
+  --load_ideas ai_scientist/ideas/elder_clowning.json \
+  --idea_idx 0 \
+  --writeup-type review \
+  --model_writeup ollama/qwen2.5:14b \
+  --model_citation ollama/qwen2.5:14b
+```
+
+Output: `experiments/<timestamp>_<name>_proposal_0/template.pdf`
+
+See [howto.md](howto.md) for a full walkthrough with annotated output.
+
+### generate_ideas_from_mcp.py — all arguments
 
 | Argument | Default | Description |
 |---|---|---|
 | `--query TEXT` | *(required)* | Semantic search query |
 | `--confidence` | None | Filter: `low` / `medium` / `high` |
 | `--domain` | None | Filter: `intervention` / `theory` / `method` |
-| `--limit INT` | `10` | Max topics to retrieve |
-| `--max-questions INT` | `3` | Max open questions per topic |
-| `--model TEXT` | `ollama/qwen3.5:9b-q8_0` | Ollama model for translation |
-| `--no-novelty-check` | False | Skip Semantic Scholar step |
-| `--append` | False | Append to existing JSON |
+| `--limit INT` | `10` | Max topics to retrieve from MCP |
+| `--max-questions INT` | `3` | Max open questions per topic to translate |
+| `--model TEXT` | `ollama/qwen3.5:9b-q8_0` | Ollama model for idea translation |
+| `--no-novelty-check` | False | Skip Semantic Scholar step entirely |
+| `--recursive` | False | Expand seed papers via S2 citation/reference traversal |
+| `--max-papers INT` | `100` | Cap on total papers after recursive expansion |
+| `--fetch-fulltext` | False | Download and extract Discussion/Results from OA PDFs |
+| `--library-list PATH` | alongside `--output` | Where to write `to_fetch_from_library.md` |
+| `--append` | False | Append to existing ideas JSON instead of overwriting |
 | `--mcp-url TEXT` | `$MCP_URL` | MCP server SSE endpoint |
 
-The LLM prompt instructs the model to assess whether each open question is already answered in the broader literature (gaps in a personal knowledge base are not necessarily real gaps), identify the genuine remaining gap, and produce a structured idea with arts-and-health-appropriate proposed studies — not Python ML code.
-
-### launch_proposal_writer.py
-
-Converts an ideas JSON into a PDF research proposal using the existing AI Scientist writeup infrastructure.
-
-Key arguments:
+### launch_proposal_writer.py — all arguments
 
 | Argument | Default | Description |
 |---|---|---|
 | `--load_ideas FILE` | *(required)* | Path to ideas JSON |
-| `--idea_idx INT` | `0` | Which idea to process |
-| `--model_writeup TEXT` | `ollama/qwen2.5:14b` | Model for paper writing |
-| `--model_citation TEXT` | `ollama/qwen2.5:14b` | Model for citation gathering |
-| `--writeup-type TEXT` | `icbinb` | `icbinb` (4-page) or `normal` (8-page) |
-| `--skip_review` | True | Skip LLM peer review (default on) |
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and set:
-
-```
-OLLAMA_BASE_URL=http://192.168.1.20:11434   # remote Ollama instance
-MCP_URL=http://localhost:8765/sse            # use localhost — IP address rejected by FastMCP host check
-S2_API_KEY=your_key_here                     # get one at semanticscholar.org/product/api (1 req/sec limit)
-```
-
-> **MCP_URL note:** FastMCP 1.x rejects connections whose `Host` header contains an IP address even when DNS-rebinding protection is nominally disabled. Always connect via `localhost` or a hostname, never a bare IP.
-
-The only change to upstream AI Scientist code is two lines in `ai_scientist/llm.py` that make the Ollama base URL configurable via `OLLAMA_BASE_URL` (previously hardcoded to `localhost`).
+| `--idea_idx INT` | `0` | Which idea to process (0-based) |
+| `--model_writeup TEXT` | `ollama/qwen2.5:14b` | Model for paper writing (big model) |
+| `--model_citation TEXT` | `ollama/qwen2.5:14b` | Model for citation gathering / clustering (small model) |
+| `--writeup-type TEXT` | `icbinb` | `icbinb` (4-page proposal), `normal` (8-page ICML), `review` (APA 7 lit review) |
+| `--num_cite_rounds INT` | `10` | S2 citation rounds (skipped when citations are pre-populated) |
+| `--skip_review` | True | Skip LLM peer review (default on — no figures in proposal mode) |
 
 ### Additional Dependencies
 
