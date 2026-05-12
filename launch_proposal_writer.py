@@ -28,6 +28,13 @@ load_dotenv()
 # NOTE: os.chdir(Path(__file__).parent) is called inside main() to avoid
 # mutating the working directory at import time.
 
+# Optional import — module may not exist yet; imported here so tests can patch
+# `launch_proposal_writer.perform_review_writeup` without error.
+try:
+    from ai_scientist.perform_review_writeup import perform_review_writeup  # noqa: F401
+except ImportError:
+    perform_review_writeup = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Experiment folder setup
@@ -177,8 +184,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_cite_rounds", type=int, default=10,
                         help="Semantic Scholar citation rounds (skipped if citations pre-populated)")
     parser.add_argument("--writeup-type", default="icbinb",
-                        choices=["icbinb", "normal"],
-                        help="icbinb = 4-page, normal = 8-page")
+                        choices=["icbinb", "normal", "review"],
+                        help="icbinb = 4-page, normal = 8-page, review = APA 7 qualitative lit review")
     parser.add_argument("--attempt_id", type=int, default=0,
                         help="Disambiguates parallel runs")
     parser.add_argument("--skip_review", action="store_true", default=True,
@@ -265,7 +272,7 @@ def main() -> None:
             vlm_model=args.model_vlm,
             page_limit=page_limit,
         )
-    else:
+    elif args.writeup_type == "normal":
         from ai_scientist.perform_writeup import perform_writeup  # type: ignore[import]
         page_limit = 8
 
@@ -279,6 +286,48 @@ def main() -> None:
             big_model=args.model_writeup,
             vlm_model=args.model_vlm,
             page_limit=page_limit,
+        )
+    elif args.writeup_type == "review":
+        import glob as _glob
+        from ai_scientist.tools.pdf_reader import extract_sections
+
+        print(f"\n[STAGE 3/5] Building tiered context for review writeup")
+
+        # Tier 1: MCP synthesis
+        tier1 = (idea.get("_mcp_topic") or {}).get("body", "")
+
+        # Tier 2: manual PDFs from pdfs/ folder alongside the ideas JSON
+        pdf_dir = os.path.join(os.path.dirname(str(load_ideas)), "pdfs")
+        tier2: dict = {}
+        if os.path.isdir(pdf_dir):
+            for pdf_path in _glob.glob(os.path.join(pdf_dir, "*.pdf")):
+                citation_key = Path(pdf_path).stem
+                sections = extract_sections(pdf_path, citation_key=citation_key)
+                if sections:
+                    tier2[citation_key] = sections
+                    print(f"  [PDF] {citation_key}: {list(sections.keys())}")
+
+        # Add OA fulltext from Stage 1 into Tier 2
+        for ck, sections in (idea.get("_oa_fulltext") or {}).items():
+            tier2[ck] = sections
+
+        # Tier 3: all S2 abstracts
+        tier3 = idea.get("_s2_papers") or []
+
+        print(f"  Tier 1: {len(tier1)} chars synthesis")
+        print(f"  Tier 2: {len(tier2)} full-text source(s)")
+        print(f"  Tier 3: {len(tier3)} abstract(s)")
+
+        print(f"\n[STAGE 4/5] Writing qualitative literature review "
+              f"(writeup_model={args.model_writeup})")
+        perform_review_writeup(
+            base_folder=folder,
+            idea=clean_idea,
+            tier1_synthesis=tier1,
+            tier2_fulltext=tier2,
+            tier3_abstracts=tier3,
+            big_model=args.model_writeup,
+            small_model=args.model_citation,
         )
 
     print(f"\n[STAGE 5/5] Post-processing")

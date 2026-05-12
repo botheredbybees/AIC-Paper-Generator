@@ -1,62 +1,60 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-10T20:42:54.226Z",
-  "source": "auto-postool",
-  "partial": false,
+  "timestamp": "2026-05-12T07:18:31.542Z",
   "phase": null,
-  "phase_name": null,
+  "phase_name": "Arts & Health Extension — review writeup type",
   "phase_dir": null,
   "plan": null,
   "task": null,
   "total_tasks": null,
-  "status": "auto-checkpoint",
-  "completed_tasks": [],
-  "remaining_tasks": [],
-  "blockers": [],
-  "human_actions_pending": [],
-  "decisions": [],
-  "uncommitted_files": [
+  "status": "paused",
+  "completed_tasks": [
     {
-      "status": "M",
-      "path": "ai_scientist/blank_icbinb_latex/template.tex"
+      "id": 1,
+      "name": "Add --writeup-type review choice to parse_args()",
+      "status": "done"
     },
     {
-      "status": "M",
-      "path": "ai_scientist/llm.py"
+      "id": 2,
+      "name": "Convert else: to elif for normal writeup, add review elif branch with tiered context",
+      "status": "done"
     },
     {
-      "status": "M",
-      "path": "ai_scientist/perform_icbinb_writeup.py"
+      "id": 3,
+      "name": "Fix test patchability: add top-level try/except import of perform_review_writeup",
+      "status": "done"
     },
     {
-      "status": "M",
-      "path": "ai_scientist/perform_vlm_review.py"
-    },
-    {
-      "status": "M",
-      "path": "ai_scientist/vlm.py"
-    },
-    {
-      "status": "M",
-      "path": "generate_ideas_from_mcp.py"
-    },
-    {
-      "status": "M",
-      "path": "launch_proposal_writer.py"
-    },
-    {
-      "status": "M",
-      "path": "tests/test_generate_ideas_from_mcp.py"
-    },
-    {
-      "status": "??",
-      "path": "ai_scientist/ideas/elder_clowning.json"
-    },
-    {
-      "status": "??",
-      "path": "ai_scientist/ideas/mcp_generated.json"
+      "id": 4,
+      "name": "All 94 tests passing",
+      "status": "done"
     }
   ],
-  "next_action": null,
-  "context_notes": "Recent commits:\nf9fa7a7 docs: README quick start, CLAUDE.md extension section, programmers_notes.md\n61f2069 smoke test fixes: S2 backoff cap + citations_text None guard\n4965a49 fix: standardise all Ollama calls to qwen2.5:14b\n0a5c40e feat: deeper tests, staged debug logging, unify model to qwen2.5:17b\n7b8935e fix: handle MCP SSE returning per-topic TextContent items in fetch_mcp_topics"
+  "remaining_tasks": [
+    {
+      "id": 5,
+      "name": "Commit: git add launch_proposal_writer.py tests/test_launch_proposal_writer.py && commit",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {
+      "decision": "Top-level try/except import of perform_review_writeup at module level",
+      "rationale": "patch('launch_proposal_writer.perform_review_writeup') requires the name to exist at module scope; local elif-block import is not patchable that way",
+      "phase": "review-writeup-type"
+    }
+  ],
+  "uncommitted_files": [
+    "launch_proposal_writer.py",
+    "tests/test_launch_proposal_writer.py",
+    ".planning/HANDOFF.json",
+    "ai_scientist/blank_icbinb_latex/template.tex",
+    "ai_scientist/perform_icbinb_writeup.py",
+    ".mcp.json",
+    "ai_scientist/blank_review_latex/"
+  ],
+  "next_action": "git add launch_proposal_writer.py tests/test_launch_proposal_writer.py && git commit -m 'feat: add --writeup-type review to launch_proposal_writer.py'",
+  "context_notes": "94/94 tests pass. The one failing test needed perform_review_writeup imported at module level (try/except) so the mock patch target exists. The local import inside the elif block was removed; the module-level name is used directly. Also blank_review_latex/ and template.tex/perform_icbinb_writeup.py are modified but were NOT part of this task — do not include them in this commit."
 }
