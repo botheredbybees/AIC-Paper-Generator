@@ -137,3 +137,76 @@ def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
 
     papers = results["data"]
     return papers
+
+
+# ---------------------------------------------------------------------------
+# Citation / reference traversal
+# ---------------------------------------------------------------------------
+
+_S2_TRAVERSAL_FIELDS = (
+    "title,authors,year,venue,abstract,citationCount,"
+    "isOpenAccess,openAccessPdf,externalIds"
+)
+
+
+@backoff.on_exception(
+    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff, max_tries=4
+)
+def fetch_paper_citations(paper_id: str, limit: int = 50) -> list[dict]:
+    """Return papers that cite paper_id (forward citations)."""
+    S2_API_KEY = os.getenv("S2_API_KEY")
+    headers = {"X-API-KEY": S2_API_KEY} if S2_API_KEY else {}
+    rsp = requests.get(
+        f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}/citations",
+        headers=headers,
+        params={"limit": limit, "fields": _S2_TRAVERSAL_FIELDS},
+    )
+    rsp.raise_for_status()
+    data = rsp.json().get("data", [])
+    time.sleep(1.0)
+    return [item.get("citingPaper", item) for item in data if item.get("citingPaper")]
+
+
+@backoff.on_exception(
+    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff, max_tries=4
+)
+def fetch_paper_references(paper_id: str, limit: int = 50) -> list[dict]:
+    """Return papers cited by paper_id (backward references)."""
+    S2_API_KEY = os.getenv("S2_API_KEY")
+    headers = {"X-API-KEY": S2_API_KEY} if S2_API_KEY else {}
+    rsp = requests.get(
+        f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}/references",
+        headers=headers,
+        params={"limit": limit, "fields": _S2_TRAVERSAL_FIELDS},
+    )
+    rsp.raise_for_status()
+    data = rsp.json().get("data", [])
+    time.sleep(1.0)
+    return [item.get("citedPaper", item) for item in data if item.get("citedPaper")]
+
+
+# ---------------------------------------------------------------------------
+# UTAS library URL builder
+# ---------------------------------------------------------------------------
+
+_UTAS_EZPROXY = "https://ezproxy.utas.edu.au/login?url=https://doi.org/{doi}"
+_UTAS_PRIMO_BASE = (
+    "https://utas.primo.exlibrisgroup.com/discovery/search"
+    "?vid=61UOT_INST:61UOT_INST&tab=LibraryCatalog"
+    "&search_scope=MyInstitution&lang=en"
+)
+
+
+def utas_library_url(doi: str | None, title: str | None = None) -> str:
+    """
+    Return a clickable UTAS library URL.
+    If doi: returns an EZproxy link directly to the DOI.
+    If title only: returns a UTAS Primo search pre-populated with the title.
+    """
+    from urllib.parse import quote
+    if doi:
+        return _UTAS_EZPROXY.format(doi=doi.strip())
+    if title:
+        encoded = quote(title.strip(), safe="")
+        return f"{_UTAS_PRIMO_BASE}&query=any,contains,{encoded}&bquery={encoded}"
+    return _UTAS_PRIMO_BASE
