@@ -1,0 +1,66 @@
+\documentclass[12pt, a4paper]{article}
+
+% --- APA 7 Requirements & Essential Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{top=2.5cm, bottom=2.5cm, left=3cm, right=3cm}
+\usepackage{setspace}
+\onehalfspacing 
+\usepackage{times} % APA 7 typically prefers Times New Roman
+
+% --- APA 7 Citation Style ---
+\usepackage[style=apa, backend=biber]{biblatex}
+\addbibresource{references.bib}
+
+\usepackage{hyperref}
+\usepackage{titlesec}
+
+% --- Section Formatting ---
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+
+% --- Metadata Placeholder ---
+\title{\textbf{TITLE_PLACEHOLDER}}
+\author{AUTHOR_PLACEHOLDER}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+ABSTRACT_PLACEHOLDER
+\end{abstract}
+
+\noindent \textbf{Keywords:} KEYWORDS_PLACEHOLDER
+
+\newpage
+
+\section{Introduction}
+% Maps to MCP Synthesis
+INTRODUCTION_PLACEHOLDER
+
+\section{Literature Review and Synthesis}
+% Focus on thematic clusters found via Semantic Scholar
+LIT_REVIEW_PLACEHOLDER
+
+\section{Theoretical and Creative Framework}
+% Where arts practice meets health theory
+THEORY_PLACEHOLDER
+
+\section{Thematic Analysis}
+% Qualitative synthesis of identified papers
+ANALYSIS_PLACEHOLDER
+
+\section{Practice-Based Implications}
+% Application to community-based arts interventions
+PRACTICE_PLACEHOLDER
+
+\section{Conclusion}
+CONCLUSION_PLACEHOLDER
+
+\newpage
+\printbibliography
+
+\end{document}

@@ -1,60 +1,42 @@
 {
   "version": "1.0",
-  "timestamp": "2026-05-12T07:18:31.542Z",
+  "timestamp": "2026-05-12T07:35:29.461Z",
+  "source": "auto-postool",
+  "partial": false,
   "phase": null,
-  "phase_name": "Arts & Health Extension — review writeup type",
+  "phase_name": null,
   "phase_dir": null,
   "plan": null,
   "task": null,
   "total_tasks": null,
-  "status": "paused",
-  "completed_tasks": [
-    {
-      "id": 1,
-      "name": "Add --writeup-type review choice to parse_args()",
-      "status": "done"
-    },
-    {
-      "id": 2,
-      "name": "Convert else: to elif for normal writeup, add review elif branch with tiered context",
-      "status": "done"
-    },
-    {
-      "id": 3,
-      "name": "Fix test patchability: add top-level try/except import of perform_review_writeup",
-      "status": "done"
-    },
-    {
-      "id": 4,
-      "name": "All 94 tests passing",
-      "status": "done"
-    }
-  ],
-  "remaining_tasks": [
-    {
-      "id": 5,
-      "name": "Commit: git add launch_proposal_writer.py tests/test_launch_proposal_writer.py && commit",
-      "status": "not_started"
-    }
-  ],
+  "status": "auto-checkpoint",
+  "completed_tasks": [],
+  "remaining_tasks": [],
   "blockers": [],
   "human_actions_pending": [],
-  "decisions": [
+  "decisions": [],
+  "uncommitted_files": [
     {
-      "decision": "Top-level try/except import of perform_review_writeup at module level",
-      "rationale": "patch('launch_proposal_writer.perform_review_writeup') requires the name to exist at module scope; local elif-block import is not patchable that way",
-      "phase": "review-writeup-type"
+      "status": "M",
+      "path": ".planning/HANDOFF.json"
+    },
+    {
+      "status": "M",
+      "path": "ai_scientist/blank_icbinb_latex/template.tex"
+    },
+    {
+      "status": "M",
+      "path": "ai_scientist/perform_icbinb_writeup.py"
+    },
+    {
+      "status": "??",
+      "path": ".mcp.json"
+    },
+    {
+      "status": "??",
+      "path": "ai_scientist/blank_review_latex/"
     }
   ],
-  "uncommitted_files": [
-    "launch_proposal_writer.py",
-    "tests/test_launch_proposal_writer.py",
-    ".planning/HANDOFF.json",
-    "ai_scientist/blank_icbinb_latex/template.tex",
-    "ai_scientist/perform_icbinb_writeup.py",
-    ".mcp.json",
-    "ai_scientist/blank_review_latex/"
-  ],
-  "next_action": "git add launch_proposal_writer.py tests/test_launch_proposal_writer.py && git commit -m 'feat: add --writeup-type review to launch_proposal_writer.py'",
-  "context_notes": "94/94 tests pass. The one failing test needed perform_review_writeup imported at module level (try/except) so the mock patch target exists. The local import inside the elif block was removed; the module-level name is used directly. Also blank_review_latex/ and template.tex/perform_icbinb_writeup.py are modified but were NOT part of this task — do not include them in this commit."
+  "next_action": null,
+  "context_notes": "Recent commits:\nd528249 fix: guard perform_review_writeup None, assert routing test, dedup OA fulltext merge\n341d9ad feat: add --writeup-type review to launch_proposal_writer.py\n8ce272e fix: _latex_safe single-pass regex to prevent double-escaping, add tests\nb4f0ccb feat: perform_review_writeup.py with thematic clustering and APA 7 placeholder filling\nda02eb5 fix: guard empty library list write, remove dead initialization in generate_ideas_from_mcp.py"
 }

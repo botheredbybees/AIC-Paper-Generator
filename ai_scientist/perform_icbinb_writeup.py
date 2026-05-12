@@ -110,8 +110,13 @@ def _splice_llm_latex(llm_latex: str, saved_preamble: str) -> str | None:
     if llm_author and llm_author.lower() not in ('anonymous', ''):
         preamble = re.sub(r'%+AUTHOR%+.*?%+AUTHOR%+', llm_author, preamble, flags=re.DOTALL)
 
-    # Remove any \bibliographystyle the LLM injected — the template controls this.
+    # Strip any \bibliographystyle or \bibliography the LLM wrote — we inject
+    # the correct ones below so they appear exactly once with the right args.
     llm_body = re.sub(r'\\bibliographystyle\{[^}]*\}', '', llm_body)
+    llm_body = re.sub(r'\\bibliography\{[^}]*\}', '', llm_body)
+
+    # Ensure the reference list is always printed with the apalike style.
+    llm_body = llm_body.rstrip() + '\n\n\\bibliographystyle{apalike}\n\\bibliography{references}\n'
 
     return preamble + '\\begin{document}\n' + llm_body + '\n\\end{document}\n'
 
@@ -704,6 +709,8 @@ Ensure you are always writing good compilable LaTeX code. Common mistakes that s
 
 Ensure proper citation usage:
 - Do NOT include a \\begin{{filecontents}} block anywhere in your response. The bibliography is already in the document preamble and must not be duplicated.
+- Do NOT write \\bibliography{{}} or \\bibliographystyle{{}} — these are injected automatically with the correct values.
+- Cite using natbib commands: \\citep{{key}} for parenthetical citations like (Author, Year), and \\citet{{key}} for narrative citations like Author (Year).
 - Use citations from the provided references.bib content.
 - Each section (especially Related Work) should have multiple citations.
 
