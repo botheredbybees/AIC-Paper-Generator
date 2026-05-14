@@ -577,7 +577,7 @@ def write_library_html(
     today = _date.today().isoformat()
     stem = Path(output_path).stem
 
-    extra_css = ""
+    extra_css = _LIBRARY_HTML_CSS_LAUNCH   # always needed — Tab 1 always active
     safe_ollama = (ollama_base_url or "http://localhost:11434").replace("\\", "/")
     js_constants = f'const OLLAMA_BASE_URL = "{_esc(safe_ollama)}";\n'
     tab1_panel = ""
@@ -596,7 +596,6 @@ def write_library_html(
     tab3_init_js = ""
     tab3_update_js = ""
     if ideas:
-        extra_css += _LIBRARY_HTML_CSS_LAUNCH
         idea_items = [
             {"idx": i, "name": idea.get("Name", ""), "title": idea.get("Title", "")}
             for i, idea in enumerate(ideas)

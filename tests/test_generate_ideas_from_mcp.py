@@ -363,7 +363,9 @@ def test_write_library_html_launch_cmd_textarea(tmp_path):
 def test_write_library_html_no_ideas_omits_launch_tab(tmp_path):
     out = tmp_path / "library.html"
     write_library_html([], str(out))
-    assert "launch-cmd" not in out.read_text()
+    content = out.read_text()
+    assert 'id="tab3-panel"' not in content
+    assert "Launch writer" not in content
 
 
 def test_write_library_html_generated_when_only_ideas(tmp_path):
