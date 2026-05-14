@@ -596,6 +596,7 @@ def write_library_html(
     tab3_init_js = ""
     tab3_update_js = ""
     tab1_update_js = ""
+    tab1_doi_lookup_js = ""
     if ideas:
         idea_items = [
             {"idx": i, "name": idea.get("Name", ""), "title": idea.get("Title", "")}
@@ -725,6 +726,34 @@ function copyCmd(btn) {
     inp.placeholder = 'tags unavailable';
     inp.disabled = true;
   }});"""
+        tab1_doi_lookup_js = """
+function lookupSeedDoi() {
+  var doi = (document.getElementById('gen-seed-doi') || {}).value || '';
+  if (!doi) return;
+  fetch(SUPABASE_URL + '/rest/v1/sources?doi=eq.' + encodeURIComponent(doi)
+        + '&select=key_concepts,tags', {
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Content-Profile': 'a1c-wiki-db'
+    }
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(rows) {
+    if (!rows || !rows.length) return;
+    var src = rows[0];
+    var queryEl = document.getElementById('gen-query');
+    var concepts = (src.key_concepts || []).slice(0, 8).join(' ');
+    if (concepts && queryEl && !queryEl.value) {
+      queryEl.value = concepts;
+      updateGenCmd();
+    }
+    var firstTag = (src.tags || [])[0];
+    var tagEl = document.getElementById('gen-tag');
+    if (firstTag && tagEl && !tagEl.value) tagEl.value = firstTag;
+  })
+  .catch(function() {});
+}"""
 
     tag_datalist_html = (
         '<input type="text" id="gen-tag" list="gen-tag-list"'
@@ -769,7 +798,7 @@ function copyCmd(btn) {
   <div class="field" style="flex:2">
     <label>Seed DOI <span class="field-help">(optional)</span></label>
     <input type="text" id="gen-seed-doi" placeholder="10.1002/14651858.CD011022.pub2"
-           oninput="updateGenCmd()">
+           oninput="updateGenCmd()" onblur="lookupSeedDoi()">
   </div>
 </div>"""
 
@@ -1023,6 +1052,7 @@ function copyFilename(btn) {{
 }}
 {tab3_update_js}
 {tab1_update_js}
+{tab1_doi_lookup_js}
 </script>
 </body>
 </html>"""

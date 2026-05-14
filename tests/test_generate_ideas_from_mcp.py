@@ -498,6 +498,17 @@ def test_write_library_html_tab1_copy_btn(tmp_path):
     assert "copyGenCmd" in content
 
 
+def test_write_library_html_seed_doi_lookup_js(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out),
+                       supabase_url="http://192.168.1.20:8000",
+                       supabase_anon_key="eyJtest")
+    content = out.read_text()
+    assert "sources?doi=eq." in content
+    assert "key_concepts" in content
+    assert "gen-query" in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 
