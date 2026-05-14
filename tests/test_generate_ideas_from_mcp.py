@@ -460,6 +460,29 @@ def test_write_library_html_supabase_tag_fetch_js(tmp_path):
     assert "/rest/v1/tags" in content
 
 
+def test_write_library_html_model_select_in_tab1(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    assert 'id="model-select-gen"' in out.read_text()
+
+
+def test_write_library_html_output_path_field(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    assert 'id="gen-output"' in content
+    assert "mcp_generated.json" in content
+
+
+def test_write_library_html_tab1_localstorage_lastpath(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    # The output path field must update lastIdeasPath on input
+    assert "lastIdeasPath" in content
+    assert "gen-output" in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 

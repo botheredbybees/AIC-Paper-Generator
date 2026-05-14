@@ -700,6 +700,7 @@ function copyCmd(btn) {
             f'const SUPABASE_ANON_KEY = "{_esc(supabase_anon_key)}";'
         )
 
+    tab1_model_fetch_js = ""
     tab1_tag_fetch_js = ""
     if supabase_url and supabase_anon_key:
         tab1_tag_fetch_js = f"""  fetch(SUPABASE_URL + '/rest/v1/tags?select=slug&order=slug', {{
@@ -771,9 +772,85 @@ function copyCmd(btn) {
   </div>
 </div>"""
 
+    tab1_section2 = """<h3>&#x2699;&#xFE0F; Run settings</h3>
+<div class="form-row">
+  <div class="field" style="flex:2">
+    <label>Model <span class="field-help">sets --model</span></label>
+    <select id="model-select-gen" onchange="updateGenCmd()"></select>
+  </div>
+  <div class="field">
+    <label>Limit</label>
+    <input type="number" id="gen-limit" value="10" min="1" oninput="updateGenCmd()">
+  </div>
+  <div class="field">
+    <label>Max questions</label>
+    <input type="number" id="gen-max-q" value="3" min="1" oninput="updateGenCmd()">
+  </div>
+</div>
+<div class="form-row">
+  <div class="field">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" id="gen-recursive" checked onchange="updateGenCmd()">
+      --recursive
+    </label>
+  </div>
+  <div class="field">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" id="gen-fetch-fulltext" onchange="updateGenCmd()">
+      --fetch-fulltext
+    </label>
+  </div>
+</div>
+<div class="form-row">
+  <div class="field" style="flex:1">
+    <label>Seed PDF path <span class="field-help">(optional &mdash; full path)</span></label>
+    <input type="text" id="gen-seed-pdf"
+           placeholder="/home/…/ai_scientist/ideas/pdfs/Smith2023.pdf"
+           oninput="updateGenCmd()" style="min-width:340px">
+  </div>
+</div>"""
+
+    tab1_section3 = """<h3>&#x1F4C1; Output</h3>
+<div class="form-row">
+  <div class="field" style="flex:1">
+    <label>Output path</label>
+    <input type="text" id="gen-output"
+           value="ai_scientist/ideas/mcp_generated.json"
+           oninput="updateGenCmd(); localStorage.setItem('lastIdeasPath', this.value);"
+           style="min-width:340px">
+  </div>
+</div>"""
+
+    tab1_model_fetch_js = """  var lastModelGen = localStorage.getItem('lastModel');
+  fetch(OLLAMA_BASE_URL + '/api/tags')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var sel = document.getElementById('model-select-gen');
+      (data.models || []).forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = 'ollama/' + m.name; opt.textContent = 'ollama/' + m.name;
+        sel.appendChild(opt);
+      });
+      if (lastModelGen && sel.querySelector('option[value="' + lastModelGen + '"]')) {
+        sel.value = lastModelGen;
+      }
+      updateGenCmd();
+    })
+    .catch(function() {
+      var sel = document.getElementById('model-select-gen');
+      var inp = document.createElement('input');
+      inp.type = 'text'; inp.id = 'model-select-gen';
+      inp.value = localStorage.getItem('lastModel') || 'ollama/qwen2.5:14b';
+      inp.addEventListener('input', updateGenCmd);
+      sel.parentNode.replaceChild(inp, sel);
+      updateGenCmd();
+    });"""
+
     tab1_panel = f"""<h2>&#9881;&#65039; Generate Ideas</h2>
 <p class="intro">Configure the run, then copy the command to your terminal.</p>
-{tab1_section1}"""
+{tab1_section1}
+{tab1_section2}
+{tab1_section3}"""
 
     if blocked_oa:
         extra_css += _LIBRARY_HTML_CSS_BLOCKED
@@ -877,6 +954,7 @@ document.addEventListener('DOMContentLoaded', function() {{
   {localstorage_lastpath}
 {tab_restore_js}
 {tab1_tag_fetch_js}
+{tab1_model_fetch_js}
 {tab3_init_js}
 }});
 function copyFilename(btn) {{
