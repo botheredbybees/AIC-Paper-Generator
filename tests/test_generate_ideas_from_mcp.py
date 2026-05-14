@@ -285,6 +285,111 @@ def test_write_library_html_pdfs_dir_path_used_in_rm_data(tmp_path):
     assert str(pdfs) in out.read_text()
 
 
+def _idea(idx=0, name="test_idea", title="Test Idea Title"):
+    return {"Name": name, "Title": title}
+
+
+def test_write_library_html_tab_bar_present(tmp_path):
+    out = tmp_path / "library.html"
+    ideas = [_idea(0, "clown_study", "Clown Study in Care Homes")]
+    write_library_html([], str(out), ideas=ideas, ideas_path="ai_scientist/ideas/test.json")
+    assert "tab-bar" in out.read_text()
+
+
+def test_write_library_html_papers_tab_present(tmp_path):
+    out = tmp_path / "library.html"
+    ideas = [_idea()]
+    write_library_html([], str(out), ideas=ideas, ideas_path="ai_scientist/ideas/test.json")
+    content = out.read_text()
+    assert "Papers" in content or "\U0001f4e5" in content
+
+
+def test_write_library_html_launch_tab_present(tmp_path):
+    out = tmp_path / "library.html"
+    ideas = [_idea(0, "my_idea", "My Idea Title")]
+    write_library_html([], str(out), ideas=ideas, ideas_path="ai_scientist/ideas/test.json")
+    assert "Launch" in out.read_text()
+
+
+def test_write_library_html_idea_radio_buttons_rendered(tmp_path):
+    out = tmp_path / "library.html"
+    ideas = [_idea(0, "idea_a", "Idea A"), _idea(1, "idea_b", "Idea B")]
+    write_library_html([], str(out), ideas=ideas, ideas_path="ai_scientist/ideas/test.json")
+    assert out.read_text().count('type="radio"') >= 2
+
+
+def test_write_library_html_idea_titles_in_tab3(tmp_path):
+    out = tmp_path / "library.html"
+    ideas = [_idea(0, "idea_a", "Therapeutic Clowning Study"),
+             _idea(1, "idea_b", "DMT Dementia Research")]
+    write_library_html([], str(out), ideas=ideas, ideas_path="ai_scientist/ideas/test.json")
+    content = out.read_text()
+    assert "Therapeutic Clowning Study" in content
+    assert "DMT Dementia Research" in content
+
+
+def test_write_library_html_ideas_path_embedded(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/elder_clowning.json")
+    assert "ai_scientist/ideas/elder_clowning.json" in out.read_text()
+
+
+def test_write_library_html_ollama_url_embedded(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/test.json",
+                       ollama_base_url="http://192.168.1.20:11434")
+    assert "http://192.168.1.20:11434" in out.read_text()
+
+
+def test_write_library_html_writeup_type_options(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/test.json")
+    content = out.read_text()
+    assert "icbinb" in content
+    assert "review" in content
+    assert "normal" in content
+
+
+def test_write_library_html_launch_cmd_textarea(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/test.json")
+    assert "launch-cmd" in out.read_text()
+
+
+def test_write_library_html_no_ideas_omits_launch_tab(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    assert "launch-cmd" not in out.read_text()
+
+
+def test_write_library_html_generated_when_only_ideas(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/test.json")
+    assert out.exists()
+
+
+def test_write_library_html_localStorage_script_present(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/test.json")
+    content = out.read_text()
+    assert "localStorage" in content
+    assert "activeTab" in content
+
+
+def test_write_library_html_lastIdeasPath_written_on_load(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), ideas=[_idea()],
+                       ideas_path="ai_scientist/ideas/elder_clowning.json")
+    content = out.read_text()
+    assert "lastIdeasPath" in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 
