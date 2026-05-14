@@ -35,6 +35,7 @@ This system autonomously generates hypotheses, runs experiments, analyzes data, 
 4.  [Arts & Health Extension](#arts--health-extension)
     *   [Research Proposal Mode](#research-proposal-mode) (4-page ICBINB PDF from MCP knowledge base)
     *   [Literature Review Mode](#literature-review-mode) (APA 7 qualitative review with recursive S2 traversal)
+    *   [Seeding from a Known Paper](#seeding-from-a-known-paper) (`--seed-doi` / `--seed-pdf`)
 5.  [Citing The AI Scientist-v2](#citing-the-ai-scientist-v2)
 6.  [Frequently Asked Questions](#frequently-asked-questions)
 7.  [Acknowledgement](#acknowledgement)
@@ -235,10 +236,15 @@ python generate_ideas_from_mcp.py \
   --model ollama/qwen2.5:14b \
   --output ai_scientist/ideas/elder_clowning.json
 
+# See what ideas were generated and pick an index
+python launch_proposal_writer.py \
+  --load_ideas ai_scientist/ideas/elder_clowning.json \
+  --list-ideas
+
 # Stage 2: write proposal PDF (~2–5 min)
 python launch_proposal_writer.py \
   --load_ideas ai_scientist/ideas/elder_clowning.json \
-  --idea_idx 0 \
+  --idea_idx 1 \
   --model_writeup ollama/qwen2.5:14b \
   --model_citation ollama/qwen2.5:14b \
   --num_cite_rounds 10
@@ -254,11 +260,14 @@ Generates a full APA 7 qualitative literature review using recursive Semantic Sc
 generate_ideas_from_mcp.py --recursive --fetch-fulltext --library-list ...
   • Seed S2 search → fetch citations + references for each seed paper
   • Classify: open-access bucket (download full text) vs paywalled bucket
-  • Write to_fetch_from_library.md with UTAS EZproxy / Primo links
-  • Attach _s2_papers, _oa_fulltext, _paywalled to the ideas JSON
+  • Write library.html — interactive download page with three sections:
+      "Paywalled Papers" (isOpenAccess=False) with UTAS Primo/EZproxy links + clipboard filename button
+      "Publisher-Blocked Downloads" (403 to bots) with direct URL + library fallback + clipboard button
+      "Auto-Downloaded Papers" checkboxes with rm command builder for the PDF pool
+  • Attach _s2_papers, _oa_fulltext, _paywalled, _blocked_oa to the ideas JSON
         │
         ▼  ai_scientist/ideas/<topic>.json
-           ai_scientist/ideas/to_fetch_from_library.md   ← manual step: retrieve these
+           ai_scientist/ideas/library.html   ← open in browser; retrieve paywalled PDFs manually
         │
         ▼  [manually save retrieved PDFs to ai_scientist/ideas/pdfs/]
         │
@@ -283,11 +292,10 @@ python generate_ideas_from_mcp.py \
   --model ollama/qwen2.5:14b \
   --recursive \
   --fetch-fulltext \
-  --library-list ai_scientist/ideas/to_fetch_from_library.md \
   --output ai_scientist/ideas/elder_clowning.json
 
-# Stage 2 (manual): open to_fetch_from_library.md, retrieve paywalled PDFs via UTAS library,
-# save them to ai_scientist/ideas/pdfs/ using the suggested filenames.
+# Stage 2 (manual): open ai_scientist/ideas/library.html in a browser; click library links,
+# download paywalled PDFs, and save them to ai_scientist/ideas/pdfs/ using the suggested filenames.
 
 # Stage 3: write APA 7 literature review PDF (~5–15 min, LLM-bound)
 python launch_proposal_writer.py \
@@ -302,21 +310,61 @@ Output: `experiments/<timestamp>_<name>_proposal_0/template.pdf`
 
 See [howto.md](howto.md) for a full walkthrough with annotated output.
 
+### Seeding from a Known Paper
+
+Use `--seed-doi` or `--seed-pdf` to bootstrap the Semantic Scholar traversal from a specific paper — useful when you already have a key reference (e.g. a Cochrane review) and want to map its citation network.
+
+```bash
+# Seed from a DOI (--query optional)
+python generate_ideas_from_mcp.py \
+  --seed-doi 10.1002/14651858.CD011022.pub2 \
+  --query "dance movement therapy dementia" \
+  --recursive \
+  --model ollama/qwen2.5:14b \
+  --output ai_scientist/ideas/dmt_dementia.json
+
+# Seed from a course paper PDF — DOI is extracted automatically
+python generate_ideas_from_mcp.py \
+  --seed-pdf ~/papers/karkou2017_cochrane_dmt.pdf \
+  --query "dance movement therapy dementia" \
+  --recursive \
+  --model ollama/qwen2.5:14b \
+  --output ai_scientist/ideas/dmt_dementia.json
+
+# Seed-only (no MCP query) — generates one idea from the seed paper's context
+python generate_ideas_from_mcp.py \
+  --seed-doi 10.1002/14651858.CD011022.pub2 \
+  --recursive \
+  --model ollama/qwen2.5:14b \
+  --output ai_scientist/ideas/dmt_dementia.json
+```
+
+**How it works:**
+
+1. If `--seed-doi` is given, the script fetches that paper from S2 by DOI and adds it to the seed list before `expand_papers_recursively()`.
+2. If `--seed-pdf` is given, the DOI is extracted from the first three pages of the PDF (regex search for `doi: 10.xxx/...`), then the same DOI lookup runs. The PDF is also passed to `extract_sections()` so its Discussion, Findings, and Results sections go straight into the Tier 2 context of the review — even if the paper is paywalled in S2.
+3. Seed papers are **unioned** with any papers from `--query` text search — duplicates are deduplicated by S2 `paperId`.
+4. If `--query` is omitted, a synthetic topic is built from the seed paper's title and abstract, and one idea is generated from it.
+
+**S2 query quality:** when `--query` is provided, the Semantic Scholar search now uses `key_concepts` collected from the source records linked to each MCP topic (rather than the raw open-question text). This produces more focused queries and avoids the `{"total": 0}` failures that occur when verbose question text is submitted verbatim.
+
 ### generate_ideas_from_mcp.py — all arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `--query TEXT` | *(required)* | Semantic search query |
+| `--query TEXT` | *(optional)* | MCP topic search query. Required unless `--seed-doi` or `--seed-pdf` is given |
+| `--seed-doi TEXT` | None | DOI to seed S2 traversal from, e.g. `10.1002/14651858.CD011022.pub2` |
+| `--seed-pdf PATH` | None | Local PDF: DOI extracted as seed + sections extracted into Tier 2 context |
 | `--confidence` | None | Filter: `low` / `medium` / `high` |
 | `--domain` | None | Filter: `intervention` / `theory` / `method` |
 | `--limit INT` | `10` | Max topics to retrieve from MCP |
 | `--max-questions INT` | `3` | Max open questions per topic to translate |
-| `--model TEXT` | `ollama/qwen3.5:9b-q8_0` | Ollama model for idea translation |
+| `--model TEXT` | `ollama/qwen2.5:14b` | Ollama model for idea translation |
 | `--no-novelty-check` | False | Skip Semantic Scholar step entirely |
 | `--recursive` | False | Expand seed papers via S2 citation/reference traversal |
 | `--max-papers INT` | `100` | Cap on total papers after recursive expansion |
 | `--fetch-fulltext` | False | Download and extract Discussion/Results from OA PDFs |
-| `--library-list PATH` | alongside `--output` | Where to write `to_fetch_from_library.md` |
+| `--library-list PATH` | alongside `--output` | Where to write `library.html` (default: `library.html` next to `--output`) |
 | `--append` | False | Append to existing ideas JSON instead of overwriting |
 | `--mcp-url TEXT` | `$MCP_URL` | MCP server SSE endpoint |
 
@@ -325,6 +373,7 @@ See [howto.md](howto.md) for a full walkthrough with annotated output.
 | Argument | Default | Description |
 |---|---|---|
 | `--load_ideas FILE` | *(required)* | Path to ideas JSON |
+| `--list-ideas` | False | Print all ideas with index and title, then exit — use before `--idea_idx` |
 | `--idea_idx INT` | `0` | Which idea to process (0-based) |
 | `--model_writeup TEXT` | `ollama/qwen2.5:14b` | Model for paper writing (big model) |
 | `--model_citation TEXT` | `ollama/qwen2.5:14b` | Model for citation gathering / clustering (small model) |
