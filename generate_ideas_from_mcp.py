@@ -1086,7 +1086,7 @@ async def _main(args: argparse.Namespace) -> None:
                 seen_ids.add(pid)
                 all_downloaded.append((p, fname))
 
-    if all_paywalled or all_blocked or all_downloaded:
+    if all_paywalled or all_blocked or all_downloaded or ideas:
         library_list_path = args.library_list or str(Path(args.output).parent / "library.html")
         pdfs_dir = Path(args.output).parent / "pdfs"
         write_library_html(
@@ -1095,6 +1095,9 @@ async def _main(args: argparse.Namespace) -> None:
             blocked_oa=all_blocked,
             downloaded=all_downloaded or None,
             pdfs_dir=pdfs_dir if all_downloaded else None,
+            ideas=ideas or None,
+            ideas_path=args.output,
+            ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         )
 
     if args.append and os.path.exists(args.output):
