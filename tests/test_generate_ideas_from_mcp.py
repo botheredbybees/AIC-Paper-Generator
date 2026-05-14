@@ -425,6 +425,41 @@ def test_write_library_html_tab1_panel_present(tmp_path):
     assert 'id="tab1-panel"' in out.read_text()
 
 
+def test_write_library_html_query_field_present(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    assert 'id="gen-query"' in out.read_text()
+
+
+def test_write_library_html_domain_options(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    assert "intervention" in content
+    assert "theory" in content
+    assert "method" in content
+
+
+def test_write_library_html_confidence_options(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    assert ">low<" in content
+    assert ">medium<" in content
+    assert ">high<" in content
+
+
+def test_write_library_html_supabase_tag_fetch_js(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out),
+                       supabase_url="http://192.168.1.20:8000",
+                       supabase_anon_key="eyJtest")
+    content = out.read_text()
+    assert 'id="gen-tag-list"' in content
+    assert "Content-Profile" in content
+    assert "/rest/v1/tags" in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 

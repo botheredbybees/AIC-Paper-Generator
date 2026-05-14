@@ -700,6 +700,81 @@ function copyCmd(btn) {
             f'const SUPABASE_ANON_KEY = "{_esc(supabase_anon_key)}";'
         )
 
+    tab1_tag_fetch_js = ""
+    if supabase_url and supabase_anon_key:
+        tab1_tag_fetch_js = f"""  fetch(SUPABASE_URL + '/rest/v1/tags?select=slug&order=slug', {{
+    headers: {{
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Content-Profile': 'a1c-wiki-db'
+    }}
+  }})
+  .then(function(r) {{ return r.json(); }})
+  .then(function(rows) {{
+    var dl = document.getElementById('gen-tag-list');
+    rows.forEach(function(row) {{
+      var opt = document.createElement('option');
+      opt.value = row.slug;
+      dl.appendChild(opt);
+    }});
+  }})
+  .catch(function() {{
+    var inp = document.getElementById('gen-tag');
+    inp.placeholder = 'tags unavailable';
+    inp.disabled = true;
+  }});"""
+
+    tag_datalist_html = (
+        '<input type="text" id="gen-tag" list="gen-tag-list"'
+        ' placeholder="type to search tags…" oninput="updateGenCmd()">\n'
+        '<datalist id="gen-tag-list"></datalist>'
+        if (supabase_url and supabase_anon_key) else
+        '<input type="text" id="gen-tag" placeholder="(Supabase not configured)"'
+        ' disabled>'
+    )
+
+    tab1_section1 = f"""<h3>&#x1F50D; What to search for</h3>
+<div class="form-row">
+  <div class="field" style="flex:2">
+    <label>Query text</label>
+    <input type="text" id="gen-query" placeholder="music therapy dementia wellbeing"
+           oninput="updateGenCmd()" style="min-width:260px">
+  </div>
+  <div class="field">
+    <label>Domain</label>
+    <select id="gen-domain" onchange="updateGenCmd()">
+      <option value="">&mdash; any &mdash;</option>
+      <option value="intervention">intervention</option>
+      <option value="theory">theory</option>
+      <option value="method">method</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Confidence</label>
+    <select id="gen-confidence" onchange="updateGenCmd()">
+      <option value="">&mdash; any &mdash;</option>
+      <option value="low">low</option>
+      <option value="medium">medium</option>
+      <option value="high">high</option>
+    </select>
+  </div>
+</div>
+<div class="form-row">
+  <div class="field" style="flex:2">
+    <label>Tag <span class="field-help">(discovery aid &mdash; type to search)</span></label>
+    {tag_datalist_html}
+  </div>
+  <div class="field" style="flex:2">
+    <label>Seed DOI <span class="field-help">(optional)</span></label>
+    <input type="text" id="gen-seed-doi" placeholder="10.1002/14651858.CD011022.pub2"
+           oninput="updateGenCmd()">
+  </div>
+</div>"""
+
+    tab1_panel = f"""<h2>&#9881;&#65039; Generate Ideas</h2>
+<p class="intro">Configure the run, then copy the command to your terminal.</p>
+{tab1_section1}"""
+
     if blocked_oa:
         extra_css += _LIBRARY_HTML_CSS_BLOCKED
     if downloaded:
@@ -801,6 +876,7 @@ function showTab(tab, btn) {{
 document.addEventListener('DOMContentLoaded', function() {{
   {localstorage_lastpath}
 {tab_restore_js}
+{tab1_tag_fetch_js}
 {tab3_init_js}
 }});
 function copyFilename(btn) {{
