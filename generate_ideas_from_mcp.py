@@ -27,7 +27,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 from ai_scientist.llm import create_client, extract_json_between_markers, get_response_from_llm
-from ai_scientist.tools.semantic_scholar import fetch_paper_citations, fetch_paper_references, search_for_papers, utas_library_url
+from ai_scientist.tools.semantic_scholar import fetch_paper_by_doi, fetch_paper_citations, fetch_paper_references, search_for_papers, utas_library_url
 
 
 # ---------------------------------------------------------------------------
@@ -36,9 +36,16 @@ from ai_scientist.tools.semantic_scholar import fetch_paper_citations, fetch_pap
 
 def bibtex_from_s2_paper(paper: dict) -> str:
     """Return a BibTeX string for a Semantic Scholar paper dict."""
+    doi = (paper.get("externalIds") or {}).get("DOI") or ""
+    doi_line = f"  doi = {{{doi}}},\n" if doi else ""
+    note_line = f"  note = {{\\url{{https://doi.org/{doi}}}}},\n" if doi else ""
+
     styles = paper.get("citationStyles") or {}
     if styles.get("bibtex"):
-        return styles["bibtex"]
+        bib = styles["bibtex"].rstrip()
+        if doi and not re.search(r'\bdoi\s*=', bib, re.IGNORECASE) and "note =" not in bib.lower():
+            bib = bib.rstrip("}") + f"\n{doi_line}{note_line}}}"
+        return bib
 
     authors = paper.get("authors") or []
     year = str(paper.get("year") or "0000")
@@ -61,7 +68,9 @@ def bibtex_from_s2_paper(paper: dict) -> str:
         f"  title = {{{title}}},\n"
         f"  author = {{{author_str}}},\n"
         f"  year = {{{year}}},\n"
-        f"{venue_line}}}"
+        f"{venue_line}"
+        f"{doi_line}"
+        f"{note_line}}}"
     )
 
 
@@ -72,6 +81,25 @@ def bibtex_from_s2_paper(paper: dict) -> str:
 def filter_topics_with_questions(topics: list[dict]) -> list[dict]:
     """Keep only topics that have at least one open question."""
     return [t for t in topics if t.get("open_questions")]
+
+
+async def fetch_source_key_concepts(source_slugs: list[str], session) -> list[str]:
+    """Call get_source for each slug and return aggregated unique key_concepts in order."""
+    concepts: list[str] = []
+    seen: set[str] = set()
+    for slug in source_slugs:
+        result = await session.call_tool("get_source", arguments={"slug": slug})
+        if not result.content:
+            continue
+        try:
+            source = json.loads(result.content[0].text)
+        except (json.JSONDecodeError, IndexError):
+            continue
+        for c in (source.get("key_concepts") or []):
+            if c not in seen:
+                seen.add(c)
+                concepts.append(c)
+    return concepts
 
 
 async def fetch_mcp_topics(
@@ -137,11 +165,22 @@ async def fetch_mcp_topics(
                     print(f"[MCP] WARNING: get_topic returned empty content for slug={slug!r}")
                     continue
                 try:
-                    full_topics.append(json.loads(get_result.content[0].text))
+                    full_topic = json.loads(get_result.content[0].text)
                     print(f"[MCP]   OK: got full topic for {slug!r}")
                 except json.JSONDecodeError as exc:
                     print(f"[MCP] WARNING: invalid JSON from get_topic for slug={slug!r}: {exc}")
                     continue
+
+                source_slugs = full_topic.get("sources") or []
+                if source_slugs:
+                    print(f"[MCP]   Fetching key_concepts from {len(source_slugs)} source(s)")
+                    full_topic["_key_concepts"] = await fetch_source_key_concepts(
+                        source_slugs, session
+                    )
+                else:
+                    full_topic["_key_concepts"] = []
+
+                full_topics.append(full_topic)
 
             return full_topics
 
@@ -279,15 +318,21 @@ def expand_papers_recursively(
         if not pid:
             continue
         print(f"    [S2] Fetching citations for {pid!r}")
-        for related in fetch_paper_citations(pid, limit=50):
-            rpid = related.get("paperId")
-            if rpid and rpid not in seen:
-                seen[rpid] = related
+        try:
+            for related in fetch_paper_citations(pid, limit=50):
+                rpid = related.get("paperId")
+                if rpid and rpid not in seen:
+                    seen[rpid] = related
+        except Exception as exc:
+            print(f"    [S2] Skipping citations for {pid!r}: {exc}")
         print(f"    [S2] Fetching references for {pid!r}")
-        for related in fetch_paper_references(pid, limit=50):
-            rpid = related.get("paperId")
-            if rpid and rpid not in seen:
-                seen[rpid] = related
+        try:
+            for related in fetch_paper_references(pid, limit=50):
+                rpid = related.get("paperId")
+                if rpid and rpid not in seen:
+                    seen[rpid] = related
+        except Exception as exc:
+            print(f"    [S2] Skipping references for {pid!r}: {exc}")
 
     # Sort by citationCount descending, cap at max_papers
     all_papers = sorted(seen.values(), key=lambda p: p.get("citationCount") or 0, reverse=True)
@@ -301,50 +346,296 @@ def classify_papers(papers: list[dict]) -> tuple[list[dict], list[dict]]:
     return oa, paywalled
 
 
-def write_library_list(paywalled: list[dict], output_path: str) -> None:
-    """Write a Markdown shopping list of paywalled papers with UTAS library links."""
+def _library_entry(p: dict, *, reason: str, pdf_url: str | None = None) -> list[str]:
+    """Format one paper as a library-list Markdown entry."""
+    title = p.get("title") or "Unknown Title"
+    authors = p.get("authors") or []
+    year = p.get("year") or "unknown"
+    doi = (p.get("externalIds") or {}).get("DOI")
+
+    first_author = ""
+    if authors:
+        name = authors[0].get("name") or ""
+        parts = name.replace(",", " ").split()
+        first_author = parts[0] if parts else "Unknown"
+
+    safe_title = re.sub(r"[^\w\s]", "", title)[:40].strip().replace(" ", "_")
+    suggested = f"{first_author}_{year}_{safe_title}.pdf"
+
+    author_str = " & ".join(a.get("name", "") for a in authors[:3])
+    if len(authors) > 3:
+        author_str += " et al."
+
+    library_url = utas_library_url(doi=doi, title=title if not doi else None)
+    link_label = "Library link" if doi else "Library search"
+
+    entry = [
+        f"- **Title:** {title}",
+        f"  - Authors: {author_str} ({year})",
+        f"  - Reason: {reason}",
+    ]
+    if pdf_url:
+        entry.append(f"  - Direct URL (try in browser): {pdf_url}")
+    entry.extend([
+        f"  - {link_label}: {library_url}",
+        f"  - Suggested filename: `{suggested}`",
+        "",
+    ])
+    return entry
+
+
+def write_library_list(
+    paywalled: list[dict],
+    output_path: str,
+    blocked_oa: list[dict] | None = None,
+) -> None:
+    """Write a Markdown shopping list of paywalled and download-blocked papers."""
     lines = [
         "# Papers Requiring Manual Library Download\n",
-        "These papers were identified as highly relevant but are not open access.\n"
-        "Retrieve them via UTAS Library using the links below, then save PDFs to the\n"
-        "`pdfs/` folder alongside your ideas JSON file.\n",
-        "## Paywalled Papers\n",
+        "Save downloaded PDFs to the `pdfs/` folder alongside your ideas JSON file.\n",
     ]
 
-    for p in paywalled:
-        title = p.get("title") or "Unknown Title"
-        authors = p.get("authors") or []
-        year = p.get("year") or "unknown"
-        doi = (p.get("externalIds") or {}).get("DOI")
+    if paywalled:
+        lines.append("## Paywalled Papers\n")
+        for p in paywalled:
+            lines.extend(_library_entry(p, reason="paywalled (isOpenAccess=False)"))
 
-        first_author = ""
-        if authors:
-            name = authors[0].get("name") or ""
-            parts = name.replace(",", " ").split()
-            first_author = parts[0] if parts else "Unknown"
-
-        safe_title = re.sub(r"[^\w\s]", "", title)[:40].strip().replace(" ", "_")
-        suggested = f"{first_author}_{year}_{safe_title}.pdf"
-
-        author_str = " & ".join(a.get("name", "") for a in authors[:3])
-        if len(authors) > 3:
-            author_str += " et al."
-
-        library_url = utas_library_url(doi=doi, title=title if not doi else None)
-        link_label = "Library link" if doi else "Library search"
-
-        lines.extend([
-            f"- **Title:** {title}",
-            f"  - Authors: {author_str} ({year})",
-            f"  - Reason: paywalled (isOpenAccess=False)",
-            f"  - {link_label}: {library_url}",
-            f"  - Suggested filename: `{suggested}`",
-            "",
-        ])
+    if blocked_oa:
+        lines.append("## Publisher-Blocked Downloads\n")
+        lines.append(
+            "These papers are open access but the publisher blocked automated download.\n"
+            "The direct URL usually works in a browser — save to the `pdfs/` folder.\n"
+        )
+        for p in blocked_oa:
+            pdf_url = (p.get("openAccessPdf") or {}).get("url")
+            lines.extend(_library_entry(p, reason="download blocked (403)", pdf_url=pdf_url))
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text("\n".join(lines), encoding="utf-8")
-    print(f"[Library] Wrote {len(paywalled)} paywalled paper(s) to {output_path}")
+    total = len(paywalled) + len(blocked_oa or [])
+    print(f"[Library] Wrote {total} paper(s) to {output_path} "
+          f"({len(paywalled)} paywalled, {len(blocked_oa or [])} blocked)")
+
+
+_LIBRARY_HTML_CSS = """
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:17px;max-width:860px;margin:0 auto;padding:24px 28px 60px;background:#fafafa;color:#1a1a1a}
+h1{font-size:24px;margin-bottom:4px}
+.meta{color:#666;font-size:14px;margin-bottom:32px}
+h2{font-size:20px;border-bottom:2px solid #e0e0e0;padding-bottom:8px;margin-top:36px}
+h3{font-size:15px;color:#555;font-weight:500;margin:24px 0 12px;text-transform:uppercase;letter-spacing:.05em}
+.badge{display:inline-block;background:#e8f0fe;color:#1a73e8;font-size:12px;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;font-weight:500}
+.badge.blocked{background:#fff3e0;color:#e65100}
+.badge.dl{background:#e8f5e9;color:#2e7d32}
+.intro{color:#555;font-size:15px;margin-top:-4px}
+.paper{border-bottom:1px solid #efefef;padding:18px 0}
+.paper:last-child{border-bottom:none}
+.paper-title{font-size:17px;font-weight:600;margin-bottom:5px;line-height:1.4}
+.paper-year{color:#888;font-weight:400}
+.paper-meta{color:#666;font-size:14px;margin-bottom:12px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+a.btn-lib{color:#1a73e8;font-size:14px;text-decoration:none;border:1px solid #1a73e8;padding:5px 14px;border-radius:5px}
+a.btn-lib:hover{background:#e8f0fe}
+button.btn-copy{font-size:14px;padding:5px 14px;border:1px solid #bbb;border-radius:5px;cursor:pointer;background:#f5f5f5;color:#333}
+button.btn-copy:hover{background:#e8e8e8}
+button.btn-copy.copied{background:#e8f5e9;border-color:#2e7d32;color:#2e7d32}
+.dl-paper{display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid #efefef;cursor:pointer}
+.dl-paper:last-child{border-bottom:none}
+.dl-paper input[type=checkbox]{width:20px;height:20px;flex-shrink:0;margin-top:3px;cursor:pointer;accent-color:#d32f2f}
+.dl-paper-text{flex:1}
+.dl-paper-title{font-size:16px;font-weight:500;line-height:1.4}
+.dl-paper-meta{color:#888;font-size:13px;margin-top:3px}
+.dl-paper.selected .dl-paper-title{color:#b71c1c;text-decoration:line-through}
+"""
+_LIBRARY_HTML_CSS_BLOCKED = (
+    "a.btn-direct{color:#2e7d32;font-size:14px;text-decoration:none;"
+    "border:1px solid #2e7d32;padding:5px 14px;border-radius:5px}"
+    "a.btn-direct:hover{background:#e8f5e9}"
+)
+_LIBRARY_HTML_CSS_DL = (
+    ".rm-box{margin-top:24px}"
+    ".rm-label{display:flex;justify-content:space-between;color:#555;font-size:13px;margin-bottom:6px}"
+    ".rm-empty{color:#999;font-size:14px;font-style:italic;padding:8px 0}"
+    "textarea.rm-cmd{width:100%;font-family:\"SFMono-Regular\",Consolas,monospace;"
+    "font-size:13px;color:#ce9178;background:#1e1e1e;border:1px solid #444;"
+    "border-radius:5px;padding:10px;resize:vertical;min-height:56px;box-sizing:border-box}"
+)
+
+
+def write_library_html(
+    paywalled: list[dict],
+    output_path: str,
+    *,
+    blocked_oa: list[dict] | None = None,
+    downloaded: list[tuple[dict, str]] | None = None,
+    pdfs_dir: "Path | None" = None,
+) -> None:
+    """Write a standalone interactive HTML library download page."""
+    import json as _json
+    from datetime import date as _date
+
+    def _esc(s: str) -> str:
+        return (s.replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace('"', "&quot;"))
+
+    def _authors_str(p: dict, n: int = 3) -> str:
+        authors = p.get("authors") or []
+        names = [a.get("name", "") for a in authors[:n]]
+        result = ", ".join(names)
+        if len(authors) > n:
+            result += " et al."
+        return result
+
+    def _suggested(p: dict) -> str:
+        authors = p.get("authors") or []
+        first = ""
+        if authors:
+            parts = (authors[0].get("name") or "").replace(",", " ").split()
+            first = parts[0] if parts else "Unknown"
+        year = p.get("year") or "0000"
+        title = p.get("title") or ""
+        safe = re.sub(r"[^\w\s]", "", title)[:40].strip().replace(" ", "_")
+        return f"{first}_{year}_{safe}.pdf"
+
+    def _fetch_entry(p: dict, *, is_blocked: bool = False) -> str:
+        title = _esc(p.get("title") or "Unknown Title")
+        year = p.get("year") or ""
+        authors = _esc(_authors_str(p))
+        venue = _esc(p.get("venue") or "")
+        doi = (p.get("externalIds") or {}).get("DOI")
+        lib_url = _esc(utas_library_url(doi=doi, title=(p.get("title") or "") if not doi else None))
+        fname = _esc(_suggested(p))
+        meta = authors + (" · " + venue if venue else "")
+        direct = ""
+        if is_blocked:
+            pdf_url = ((p.get("openAccessPdf") or {}).get("url") or "")
+            if pdf_url:
+                direct = f'<a class="btn-direct" href="{_esc(pdf_url)}" target="_blank">↗ Try direct URL</a>\n    '
+        return (
+            f'<div class="paper">'
+            f'<div class="paper-title">{title} <span class="paper-year">({year})</span></div>'
+            f'<div class="paper-meta">{meta}</div>'
+            f'<div class="actions">'
+            f'<a class="btn-lib" href="{lib_url}" target="_blank">🔗 Open in Library</a>'
+            f'{direct}'
+            f'<button class="btn-copy" data-filename="{fname}" onclick="copyFilename(this)">📋 {fname}</button>'
+            f'</div></div>'
+        )
+
+    def _dl_entry(p: dict, idx: int) -> str:
+        title = _esc(p.get("title") or "Unknown Title")
+        year = p.get("year") or ""
+        authors = _esc(_authors_str(p))
+        return (
+            f'<div class="dl-paper" onclick="togglePaper(this)">'
+            f'<input type="checkbox" id="dl-{idx}">'
+            f'<div class="dl-paper-text">'
+            f'<div class="dl-paper-title">{title} <span class="paper-year">({year})</span></div>'
+            f'<div class="dl-paper-meta">{authors}</div>'
+            f'</div></div>'
+        )
+
+    n_pw = len(paywalled)
+    n_bl = len(blocked_oa or [])
+    n_dl = len(downloaded or [])
+    today = _date.today().isoformat()
+    stem = Path(output_path).stem
+
+    extra_css = ""
+    if blocked_oa:
+        extra_css += _LIBRARY_HTML_CSS_BLOCKED
+    if downloaded:
+        extra_css += _LIBRARY_HTML_CSS_DL
+
+    fetch_html = ""
+    if paywalled:
+        entries = "\n".join(_fetch_entry(p) for p in paywalled)
+        fetch_html += f'<h3>Paywalled <span class="badge">{n_pw} papers</span></h3>\n{entries}\n'
+    if blocked_oa:
+        entries = "\n".join(_fetch_entry(p, is_blocked=True) for p in blocked_oa)
+        fetch_html += (
+            f'<h3>Publisher-Blocked (open access but 403)'
+            f' <span class="badge blocked">{n_bl} papers</span></h3>\n{entries}\n'
+        )
+
+    dl_html = ""
+    if downloaded:
+        prefix = (str(pdfs_dir) + "/") if pdfs_dir else "pdfs/"
+        rm_paths = _json.dumps([prefix + fname for _, fname in downloaded])
+        items = "\n".join(_dl_entry(p, i) for i, (p, _) in enumerate(downloaded))
+        dl_html = f"""
+<h2>&#x2705; Auto-Downloaded Papers <span class="badge dl">{n_dl} papers</span></h2>
+<p class="intro">Check papers to remove from the PDF pool. The shell command updates below.</p>
+<div id="dl-list">
+{items}
+</div>
+<div class="rm-box">
+  <div class="rm-label">
+    <span>Shell command &mdash; copy and paste to remove selected papers from the pool</span>
+    <span id="sel-count">0 selected</span>
+  </div>
+  <div id="rm-empty" class="rm-empty">Select papers above to generate the rm command.</div>
+  <textarea id="rm-cmd" class="rm-cmd" style="display:none" readonly></textarea>
+</div>
+<script>
+const DL_FILES = {rm_paths};
+function togglePaper(el) {{
+  const cb = el.querySelector('input[type=checkbox]');
+  cb.checked = !cb.checked;
+  el.classList.toggle('selected', cb.checked);
+  updateRm();
+}}
+function updateRm() {{
+  const sel = [];
+  document.querySelectorAll('.dl-paper').forEach(function(el, i) {{
+    if (el.querySelector('input').checked) sel.push(DL_FILES[i]);
+  }});
+  document.getElementById('sel-count').textContent = sel.length + ' selected';
+  const ta = document.getElementById('rm-cmd');
+  const empty = document.getElementById('rm-empty');
+  if (sel.length === 0) {{
+    ta.style.display = 'none'; empty.style.display = 'block';
+  }} else {{
+    empty.style.display = 'none'; ta.style.display = 'block';
+    ta.value = 'rm ' + sel.join(' ');
+  }}
+}}
+</script>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Library downloads &mdash; {stem}</title>
+<style>{_LIBRARY_HTML_CSS}{extra_css}</style>
+</head>
+<body>
+<h1>&#x1F4DA; Library download list</h1>
+<div class="meta">Generated {today} &middot; {stem} &middot; {n_pw + n_bl} to fetch, {n_dl} auto-downloaded</div>
+<h2>&#x1F4E5; Papers to Fetch Manually</h2>
+{fetch_html}
+{dl_html}
+<script>
+function copyFilename(btn) {{
+  navigator.clipboard.writeText(btn.dataset.filename).then(function() {{
+    var orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(function() {{ btn.textContent = orig; btn.classList.remove('copied'); }}, 2000);
+  }});
+}}
+</script>
+</body>
+</html>"""
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_text(html, encoding="utf-8")
+    print(
+        f"[Library] Wrote interactive HTML to {output_path} "
+        f"({n_pw} paywalled, {n_bl} blocked, {n_dl} downloaded)"
+    )
 
 
 def attach_private_keys(
@@ -353,6 +644,7 @@ def attach_private_keys(
     s2_papers: list[dict],
     paywalled: list[dict] | None = None,
     oa_fulltext: dict | None = None,
+    blocked_oa: list[dict] | None = None,
 ) -> dict:
     """Attach private metadata keys to an idea dict for downstream use."""
     result = dict(idea)
@@ -360,20 +652,52 @@ def attach_private_keys(
     result["_s2_bibtex"] = [bibtex_from_s2_paper(p) for p in (s2_papers or [])]
     result["_s2_papers"] = s2_papers or []
     result["_paywalled"] = paywalled or []
+    result["_blocked_oa"] = blocked_oa or []
     result["_oa_fulltext"] = oa_fulltext or {}
     return result
+
+
+# ---------------------------------------------------------------------------
+# Seed PDF section extraction
+# ---------------------------------------------------------------------------
+
+from ai_scientist.tools.pdf_reader import extract_sections
+
+
+def extract_seed_pdf_sections(pdf_path: str, paper: dict) -> dict[str, dict]:
+    """
+    Extract named sections from a local seed PDF and return {paperId: {section: text}}.
+    Always runs regardless of --fetch-fulltext — the file is already local.
+    Returns {} if nothing is extracted or on any error.
+    """
+    pid = paper.get("paperId") or "seed"
+    authors = paper.get("authors") or []
+    first = (authors[0].get("name") or "").split()[-1] if authors else "Unknown"
+    year = str(paper.get("year") or "0000")
+    ck = f"{first}{year}"
+    sections = extract_sections(pdf_path, citation_key=ck)
+    if sections:
+        print(f"[SEED-PDF] Extracted {list(sections.keys())} from local file "
+              f"(citation_key={ck!r})")
+        return {pid: sections}
+    return {}
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
-def parse_args() -> argparse.Namespace:
+def parse_args(args=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate AI Scientist ideas from the a1c-knowledge MCP server"
     )
-    parser.add_argument("--query", required=True,
-                        help="Semantic search query, e.g. 'elder clowning wellbeing'")
+    parser.add_argument("--query", default=None,
+                        help="Semantic search query, e.g. 'elder clowning wellbeing'. "
+                             "Optional when --seed-doi or --seed-pdf is provided.")
+    parser.add_argument("--seed-doi", default=None, dest="seed_doi",
+                        help="DOI to seed S2 traversal from (e.g. '10.1002/14651858.CD011022.pub2')")
+    parser.add_argument("--seed-pdf", default=None, dest="seed_pdf",
+                        help="Path to a local PDF; DOI is extracted and used as seed")
     parser.add_argument("--confidence", default=None,
                         choices=["low", "medium", "high"])
     parser.add_argument("--domain", default=None,
@@ -405,17 +729,74 @@ def parse_args() -> argparse.Namespace:
                         help="Download and extract Discussion/Results from OA PDFs (requires --recursive)")
     parser.add_argument("--library-list", default=None, dest="library_list",
                         help="Path to write to_fetch_from_library.md (default: alongside --output)")
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 async def _main(args: argparse.Namespace) -> None:
-    print(f"[STAGE 1/4] MCP topic search")
-    print(f"  query={args.query!r} confidence={args.confidence} "
-          f"domain={args.domain} limit={args.limit} mcp_url={args.mcp_url}")
-    topics = await fetch_mcp_topics(
-        args.query, args.domain, args.confidence, args.limit, args.mcp_url
-    )
-    print(f"[STAGE 1/4] Done — {len(topics)} topic(s) with open questions")
+    # Validate: need at least one of --query, --seed-doi, --seed-pdf
+    if not args.query and not args.seed_doi and not args.seed_pdf:
+        print("ERROR: provide at least one of --query, --seed-doi, or --seed-pdf")
+        return
+
+    # Resolve DOI seed papers early (before MCP, so they can be unioned)
+    doi_seed_papers: list[dict] = []
+    seed_pdf_fulltext: dict[str, dict] = {}
+
+    if args.seed_doi:
+        print(f"[SEED-DOI] Fetching S2 paper for DOI={args.seed_doi!r}")
+        paper = fetch_paper_by_doi(args.seed_doi)
+        if paper:
+            doi_seed_papers.append(paper)
+            print(f"[SEED-DOI] Found: {paper.get('title')!r}")
+        else:
+            print(f"[SEED-DOI] WARNING: DOI not found in S2 — {args.seed_doi!r}")
+
+    if args.seed_pdf:
+        print(f"[SEED-PDF] Extracting DOI from {args.seed_pdf!r}")
+        from ai_scientist.tools.pdf_reader import extract_doi_from_pdf
+        doi = extract_doi_from_pdf(args.seed_pdf)
+        if doi:
+            print(f"[SEED-PDF] Found DOI={doi!r}, fetching from S2...")
+            paper = fetch_paper_by_doi(doi)
+            if paper:
+                doi_seed_papers.append(paper)
+                print(f"[SEED-PDF] Found: {paper.get('title')!r}")
+                seed_pdf_fulltext.update(extract_seed_pdf_sections(args.seed_pdf, paper))
+            else:
+                print(f"[SEED-PDF] WARNING: DOI {doi!r} not found in S2")
+        else:
+            print(f"[SEED-PDF] WARNING: no DOI found in {args.seed_pdf!r}")
+
+    print(f"\n[STAGE 1/4] MCP topic search")
+    if args.query:
+        print(f"  query={args.query!r} confidence={args.confidence} "
+              f"domain={args.domain} limit={args.limit} mcp_url={args.mcp_url}")
+        topics = await fetch_mcp_topics(
+            args.query, args.domain, args.confidence, args.limit, args.mcp_url
+        )
+        print(f"[STAGE 1/4] Done — {len(topics)} topic(s) with open questions")
+    else:
+        # No --query: synthesize a topic from the seed papers
+        topics = []
+        if doi_seed_papers:
+            seed = doi_seed_papers[0]
+            synthetic_topic = {
+                "slug": "_seed",
+                "title": seed.get("title", "Seeded Paper"),
+                "domain": "intervention",
+                "confidence": "medium",
+                "tags": [],
+                "key_findings": [(seed.get("abstract") or "")[:500]],
+                "open_questions": [
+                    f"What are the implications of '{seed.get('title', 'this paper')}' "
+                    f"for arts and health research?"
+                ],
+                "sources": [],
+                "_key_concepts": [],
+            }
+            topics = [synthetic_topic]
+            print(f"[STAGE 1/4] No --query; synthesised topic from seed paper: "
+                  f"{seed.get('title')!r}")
 
     if not topics:
         print("No topics found. Try broadening --query, removing --confidence, or increasing --limit.")
@@ -433,11 +814,24 @@ async def _main(args: argparse.Namespace) -> None:
             print(f"  [{qi}/{len(questions)}] {question[:100]}")
 
             s2_papers: list[dict] = []
-            oa_fulltext: dict[str, dict] = {}
+            # Pre-seed with locally extracted sections from --seed-pdf (always included)
+            oa_fulltext: dict[str, dict] = dict(seed_pdf_fulltext)
             if not args.no_novelty_check:
-                print(f"    [S2] Searching Semantic Scholar...")
-                seed_papers = search_for_papers(question, result_limit=args.s2_papers) or []
-                print(f"    [S2] {len(seed_papers)} seed paper(s) found")
+                # Use key_concepts as S2 query when available — more focused than raw question text
+                key_concepts = topic.get("_key_concepts") or []
+                s2_query = " ".join(key_concepts[:6]) if key_concepts else question
+                if key_concepts:
+                    print(f"    [S2] Using key_concepts as query: {s2_query!r}")
+                else:
+                    print(f"    [S2] Searching Semantic Scholar (no key_concepts, using question)...")
+                text_papers = search_for_papers(s2_query, result_limit=args.s2_papers) or []
+                # Union text-search results with DOI seed papers
+                seed_papers = doi_seed_papers + [
+                    p for p in text_papers
+                    if p.get("paperId") not in {sp.get("paperId") for sp in doi_seed_papers}
+                ]
+                print(f"    [S2] {len(seed_papers)} seed paper(s) found "
+                      f"({len(doi_seed_papers)} from DOI, {len(text_papers)} from search)")
 
                 if args.recursive and seed_papers:
                     print(f"    [S2] Recursive expansion (cap={args.max_papers})...")
@@ -448,22 +842,35 @@ async def _main(args: argparse.Namespace) -> None:
 
             oa_papers, paywalled_papers = classify_papers(s2_papers)
 
+            blocked_oa_papers: list[dict] = []
             if args.fetch_fulltext and oa_papers:
-                from ai_scientist.tools.pdf_reader import extract_sections
-                print(f"    [PDF] Fetching full text from {len(oa_papers)} OA paper(s)...")
-                for p in oa_papers:
+                oa_with_pdf = [p for p in oa_papers if (p.get("openAccessPdf") or {}).get("url")]
+                print(f"    [PDF] {len(oa_with_pdf)} of {len(oa_papers)} OA paper(s) have PDF URLs"
+                      f" ({len(s2_papers) - len(oa_papers)} paywalled); fetching full text...")
+                pdfs_dir = Path(args.output).parent / "pdfs"
+                pdfs_dir.mkdir(exist_ok=True)
+                for p in oa_with_pdf:
                     oa_url = (p.get("openAccessPdf") or {}).get("url")
-                    if not oa_url:
-                        continue
-                    pid = p.get("paperId", "unknown")
                     authors = p.get("authors") or []
                     first = (authors[0].get("name") or "").split()[-1] if authors else "Unknown"
                     year = str(p.get("year") or "0000")
-                    ck = f"{first}{year}"
-                    sections = extract_sections(oa_url, citation_key=ck)
+                    bib_key = re.sub(r"[^a-z0-9]", "", f"{first.lower()}{year}")
+                    pdf_dest = pdfs_dir / f"{bib_key}.pdf"
+                    # Download once; save to pdfs/ then extract sections from local copy
+                    if not pdf_dest.exists():
+                        try:
+                            import requests as _req
+                            r = _req.get(oa_url, timeout=30)
+                            r.raise_for_status()
+                            pdf_dest.write_bytes(r.content)
+                        except Exception as exc:
+                            print(f"      [PDF] {bib_key}: download failed ({exc})")
+                            blocked_oa_papers.append(p)
+                            continue
+                    sections = extract_sections(str(pdf_dest), citation_key=bib_key)
                     if sections:
-                        oa_fulltext[pid] = sections
-                        print(f"      [PDF] {ck}: {list(sections.keys())}")
+                        oa_fulltext[bib_key] = sections
+                        print(f"      [PDF] {bib_key}: {list(sections.keys())} → saved {pdf_dest.name}")
 
             print(f"\n[STAGE 3/4] LLM idea translation (model={args.model})")
             idea = translate_to_idea(topic, question, s2_papers, args.model)
@@ -471,14 +878,16 @@ async def _main(args: argparse.Namespace) -> None:
                 print("    WARNING: LLM returned invalid JSON — skipping this question")
                 continue
 
-            ideas.append(attach_private_keys(idea, topic, s2_papers, paywalled_papers, oa_fulltext))
+            ideas.append(attach_private_keys(idea, topic, s2_papers, paywalled_papers, oa_fulltext,
+                                              blocked_oa=blocked_oa_papers))
             print(f"    Generated idea: {idea.get('Name', 'unknown')!r}")
 
     print(f"\n[STAGE 4/4] Writing output — {len(ideas)} idea(s) generated")
 
-    if any(idea.get("_paywalled") for idea in ideas):
+    if any(idea.get("_paywalled") or idea.get("_blocked_oa") for idea in ideas):
         library_list_path = args.library_list or str(Path(args.output).parent / "to_fetch_from_library.md")
-        all_paywalled = []
+        all_paywalled: list[dict] = []
+        all_blocked: list[dict] = []
         seen_ids: set[str] = set()
         for idea in ideas:
             for p in (idea.get("_paywalled") or []):
@@ -486,8 +895,13 @@ async def _main(args: argparse.Namespace) -> None:
                 if pid and pid not in seen_ids:
                     seen_ids.add(pid)
                     all_paywalled.append(p)
-        if all_paywalled:
-            write_library_list(all_paywalled, library_list_path)
+            for p in (idea.get("_blocked_oa") or []):
+                pid = p.get("paperId")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    all_blocked.append(p)
+        if all_paywalled or all_blocked:
+            write_library_list(all_paywalled, library_list_path, blocked_oa=all_blocked)
 
     if args.append and os.path.exists(args.output):
         try:

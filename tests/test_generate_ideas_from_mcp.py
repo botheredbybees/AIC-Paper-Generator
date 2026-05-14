@@ -24,7 +24,7 @@ def test_create_client_ollama_defaults_to_localhost(monkeypatch):
     assert "localhost:11434" in str(client.base_url)
 
 
-from generate_ideas_from_mcp import bibtex_from_s2_paper
+from generate_ideas_from_mcp import bibtex_from_s2_paper, write_library_html
 
 
 def test_bibtex_uses_citation_styles_when_present():
@@ -116,6 +116,175 @@ def test_bibtex_key_generation_lowercase():
     assert result.startswith("@article{berg2020")
 
 
+def test_bibtex_fallback_includes_doi_fields_when_present():
+    paper = {
+        "citationStyles": {},
+        "title": "Elder Clowning Study",
+        "authors": [{"name": "Jane Smith"}],
+        "year": 2021,
+        "venue": "Arts in Psychotherapy",
+        "externalIds": {"DOI": "10.1000/xyz123"},
+    }
+    result = bibtex_from_s2_paper(paper)
+    assert "doi = {10.1000/xyz123}" in result
+    assert r"note = {\url{https://doi.org/10.1000/xyz123}}" in result
+
+
+def test_bibtex_fallback_omits_doi_fields_when_absent():
+    paper = {
+        "citationStyles": {},
+        "title": "A Study",
+        "authors": [{"name": "Alice Brown"}],
+        "year": 2020,
+        "venue": "",
+    }
+    result = bibtex_from_s2_paper(paper)
+    assert "doi" not in result
+    assert "note" not in result
+
+
+def test_bibtex_citation_styles_gets_doi_injected():
+    paper = {
+        "citationStyles": {"bibtex": "@article{smith2021,\n  title={Test},\n}"},
+        "externalIds": {"DOI": "10.9999/abc"},
+        "title": "Test", "authors": [], "year": 2021, "venue": "",
+    }
+    result = bibtex_from_s2_paper(paper)
+    assert "doi = {10.9999/abc}" in result
+    assert r"note = {\url{https://doi.org/10.9999/abc}}" in result
+
+
+def test_bibtex_citation_styles_doi_not_duplicated_if_already_present():
+    """If S2's own bibtex already has a doi field, we don't add a second one."""
+    paper = {
+        "citationStyles": {"bibtex": "@article{smith2021,\n  title={Test},\n  doi={10.9999/abc},\n}"},
+        "externalIds": {"DOI": "10.9999/abc"},
+        "title": "Test", "authors": [], "year": 2021, "venue": "",
+    }
+    result = bibtex_from_s2_paper(paper)
+    assert result.count("doi") == 1
+
+
+# ---------------------------------------------------------------------------
+# write_library_html tests
+# ---------------------------------------------------------------------------
+
+def _paper(title="Test Paper", year=2020, doi=None, venue="", authors=None, pdf_url=None):
+    return {
+        "title": title,
+        "year": year,
+        "authors": authors or [{"name": "Alice Smith"}],
+        "venue": venue,
+        "externalIds": {"DOI": doi} if doi else {},
+        "openAccessPdf": {"url": pdf_url} if pdf_url else None,
+    }
+
+
+def test_write_library_html_creates_valid_html_file(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    assert out.exists()
+    content = out.read_text()
+    assert "<!DOCTYPE html>" in content
+    assert "<html" in content
+
+
+def test_write_library_html_paywalled_shows_full_title_and_year(tmp_path):
+    p = _paper("Elder-Clowning in Long-Term Dementia Care", year=2016, doi="10.1000/x")
+    out = tmp_path / "library.html"
+    write_library_html([p], str(out))
+    content = out.read_text()
+    assert "Elder-Clowning in Long-Term Dementia Care" in content
+    assert "(2016)" in content
+
+
+def test_write_library_html_library_link_uses_ezproxy(tmp_path):
+    p = _paper(doi="10.1000/test")
+    out = tmp_path / "library.html"
+    write_library_html([p], str(out))
+    assert "ezproxy.utas.edu.au" in out.read_text()
+
+
+def test_write_library_html_clipboard_button_has_suggested_filename(tmp_path):
+    p = _paper("Elder Clowning Study", year=2023, authors=[{"name": "Jane Smith"}])
+    out = tmp_path / "library.html"
+    write_library_html([p], str(out))
+    content = out.read_text()
+    assert "btn-copy" in content
+    assert "Jane_2023" in content  # first word of author name + year
+
+
+def test_write_library_html_blocked_has_direct_url_button(tmp_path):
+    p = _paper(pdf_url="https://example.com/paper.pdf")
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), blocked_oa=[p])
+    content = out.read_text()
+    assert "btn-direct" in content
+    assert "https://example.com/paper.pdf" in content
+
+
+def test_write_library_html_paywalled_entry_has_no_direct_btn(tmp_path):
+    p = _paper(doi="10.1/x")
+    out = tmp_path / "library.html"
+    write_library_html([p], str(out))
+    assert "btn-direct" not in out.read_text()
+
+
+def test_write_library_html_downloaded_papers_rendered_as_checkboxes(tmp_path):
+    p = _paper("Downloaded Paper", year=2021)
+    out = tmp_path / "library.html"
+    pdfs = tmp_path / "pdfs"
+    write_library_html([], str(out), downloaded=[(p, "smith2021.pdf")], pdfs_dir=pdfs)
+    content = out.read_text()
+    assert "dl-paper" in content
+    assert "Downloaded Paper" in content
+    assert 'type="checkbox"' in content
+
+
+def test_write_library_html_downloaded_files_in_js_array(tmp_path):
+    p = _paper(year=2021)
+    out = tmp_path / "library.html"
+    pdfs = tmp_path / "pdfs"
+    write_library_html([], str(out), downloaded=[(p, "alice2021.pdf")], pdfs_dir=pdfs)
+    content = out.read_text()
+    assert "DL_FILES" in content
+    assert "alice2021.pdf" in content
+
+
+def test_write_library_html_rm_textarea_present_when_downloaded(tmp_path):
+    p = _paper()
+    out = tmp_path / "library.html"
+    pdfs = tmp_path / "pdfs"
+    write_library_html([], str(out), downloaded=[(p, "alice2020.pdf")], pdfs_dir=pdfs)
+    assert "rm-cmd" in out.read_text()
+    assert "updateRm" in out.read_text()
+
+
+def test_write_library_html_no_downloaded_omits_dl_section(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    assert "dl-list" not in content
+    assert "rm-cmd" not in content
+
+
+def test_write_library_html_escapes_ampersand_in_title(tmp_path):
+    p = _paper("Arts & Health Research", doi="10.1/x")
+    out = tmp_path / "library.html"
+    write_library_html([p], str(out))
+    content = out.read_text()
+    assert "&amp;" in content
+    assert "Arts & Health" not in content
+
+
+def test_write_library_html_pdfs_dir_path_used_in_rm_data(tmp_path):
+    pdfs = tmp_path / "ai_scientist" / "ideas" / "pdfs"
+    p = _paper()
+    out = tmp_path / "library.html"
+    write_library_html([], str(out), downloaded=[(p, "jones2020.pdf")], pdfs_dir=pdfs)
+    assert str(pdfs) in out.read_text()
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 
@@ -153,6 +322,10 @@ async def test_fetch_mcp_topics_returns_full_topic_data():
         "body": "Synthesis body text.",
         "sources": ["fxa303-week08-therapeutic-clowning"],
     }
+    source_payload = {
+        "slug": "fxa303-week08-therapeutic-clowning",
+        "key_concepts": ["therapeutic clowning", "humor therapy", "older adults"],
+    }
 
     mock_search_result = MagicMock()
     mock_search_result.content = [MagicMock(text=json.dumps(search_payload))]
@@ -160,9 +333,12 @@ async def test_fetch_mcp_topics_returns_full_topic_data():
     mock_get_result = MagicMock()
     mock_get_result.content = [MagicMock(text=json.dumps(full_payload))]
 
+    mock_source_result = MagicMock()
+    mock_source_result.content = [MagicMock(text=json.dumps(source_payload))]
+
     mock_session = AsyncMock()
     mock_session.call_tool = AsyncMock(
-        side_effect=[mock_search_result, mock_get_result]
+        side_effect=[mock_search_result, mock_get_result, mock_source_result]
     )
 
     mock_session_cm = AsyncMock()
@@ -188,6 +364,7 @@ async def test_fetch_mcp_topics_returns_full_topic_data():
     assert len(topics) == 1
     assert topics[0]["slug"] == "therapeutic-clowning"
     assert topics[0]["key_findings"] == ["Reduces anxiety", "Improves mood"]
+    assert "therapeutic clowning" in topics[0]["_key_concepts"]
 
 
 @pytest.mark.asyncio
@@ -211,8 +388,14 @@ async def test_fetch_mcp_topics_handles_per_item_content():
     mock_get_result = MagicMock()
     mock_get_result.content = [MagicMock(text=json.dumps(full_a))]
 
+    source_a = {"slug": "src-1", "key_concepts": ["art therapy", "movement"]}
+    mock_source_result = MagicMock()
+    mock_source_result.content = [MagicMock(text=json.dumps(source_a))]
+
     mock_session = AsyncMock()
-    mock_session.call_tool = AsyncMock(side_effect=[mock_search_result, mock_get_result])
+    mock_session.call_tool = AsyncMock(
+        side_effect=[mock_search_result, mock_get_result, mock_source_result]
+    )
 
     mock_session_cm = AsyncMock()
     mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
@@ -230,8 +413,8 @@ async def test_fetch_mcp_topics_handles_per_item_content():
     assert len(topics) == 1
     assert topics[0]["slug"] == "a"
     assert topics[0]["key_findings"] == ["F1"]
-    # get_topic called only for topic_a (1 search + 1 get = 2 total)
-    assert mock_session.call_tool.call_count == 2
+    # 1 search + 1 get_topic for a + 1 get_source for src-1 = 3 total
+    assert mock_session.call_tool.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -511,6 +694,31 @@ def test_expand_papers_includes_seeds():
     assert "seed1" in paper_ids
 
 
+def test_expand_papers_skips_citation_fetch_on_http_error():
+    import requests
+    seeds = [_make_paper("seed1")]
+    err = requests.exceptions.HTTPError("429 rate limit")
+
+    with patch("generate_ideas_from_mcp.fetch_paper_citations", side_effect=err), \
+         patch("generate_ideas_from_mcp.fetch_paper_references", return_value=[]):
+        result = expand_papers_recursively(seeds, max_papers=100)
+
+    # Should still return the seed; error must not propagate
+    assert any(p["paperId"] == "seed1" for p in result)
+
+
+def test_expand_papers_skips_reference_fetch_on_http_error():
+    import requests
+    seeds = [_make_paper("seed1")]
+    err = requests.exceptions.HTTPError("429 rate limit")
+
+    with patch("generate_ideas_from_mcp.fetch_paper_citations", return_value=[]), \
+         patch("generate_ideas_from_mcp.fetch_paper_references", side_effect=err):
+        result = expand_papers_recursively(seeds, max_papers=100)
+
+    assert any(p["paperId"] == "seed1" for p in result)
+
+
 def test_classify_papers_splits_by_open_access():
     papers = [
         _make_paper("oa1", is_oa=True),
@@ -634,3 +842,149 @@ def test_ideas_json_has_s2_papers_key_after_recursive(tmp_path, monkeypatch):
     assert "_s2_papers" in ideas[0]
     assert "_paywalled" in ideas[0]
     assert "_oa_fulltext" in ideas[0]
+
+
+# ---------------------------------------------------------------------------
+# fetch_source_key_concepts
+# ---------------------------------------------------------------------------
+
+from generate_ideas_from_mcp import fetch_source_key_concepts
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_key_concepts_returns_concepts_from_source():
+    source_record = {
+        "slug": "fxa303-week08-clowning",
+        "key_concepts": ["therapeutic clowning", "humor therapy", "older adults"],
+    }
+    mock_result = MagicMock()
+    mock_result.content = [MagicMock(text=json.dumps(source_record))]
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+    result = await fetch_source_key_concepts(["fxa303-week08-clowning"], mock_session)
+
+    assert "therapeutic clowning" in result
+    assert "humor therapy" in result
+    assert "older adults" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_key_concepts_deduplicates_across_sources():
+    source_a = {"slug": "a", "key_concepts": ["art therapy", "wellbeing"]}
+    source_b = {"slug": "b", "key_concepts": ["wellbeing", "dementia"]}
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(side_effect=[
+        MagicMock(content=[MagicMock(text=json.dumps(source_a))]),
+        MagicMock(content=[MagicMock(text=json.dumps(source_b))]),
+    ])
+
+    result = await fetch_source_key_concepts(["a", "b"], mock_session)
+
+    assert result.count("wellbeing") == 1
+    assert "art therapy" in result
+    assert "dementia" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_key_concepts_returns_empty_for_no_slugs():
+    mock_session = AsyncMock()
+    result = await fetch_source_key_concepts([], mock_session)
+    assert result == []
+    mock_session.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_key_concepts_skips_invalid_json():
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(
+        return_value=MagicMock(content=[MagicMock(text="not json")])
+    )
+    result = await fetch_source_key_concepts(["bad-slug"], mock_session)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# parse_args — seed-doi / seed-pdf flags
+# ---------------------------------------------------------------------------
+
+from generate_ideas_from_mcp import parse_args
+
+
+def test_parse_args_accepts_seed_doi():
+    args = parse_args(["--seed-doi", "10.1002/14651858.CD011022.pub2",
+                       "--query", "dementia movement therapy"])
+    assert args.seed_doi == "10.1002/14651858.CD011022.pub2"
+
+
+def test_parse_args_accepts_seed_pdf():
+    args = parse_args(["--seed-pdf", "/home/user/paper.pdf",
+                       "--query", "dementia movement therapy"])
+    assert args.seed_pdf == "/home/user/paper.pdf"
+
+
+def test_parse_args_query_optional_when_seed_doi_given():
+    args = parse_args(["--seed-doi", "10.1002/test"])
+    assert args.seed_doi == "10.1002/test"
+    assert args.query is None
+
+
+def test_parse_args_query_optional_when_seed_pdf_given():
+    args = parse_args(["--seed-pdf", "/path/to/paper.pdf"])
+    assert args.seed_pdf == "/path/to/paper.pdf"
+    assert args.query is None
+
+
+def test_parse_args_seed_doi_defaults_to_none():
+    args = parse_args(["--query", "test query"])
+    assert args.seed_doi is None
+
+
+def test_parse_args_seed_pdf_defaults_to_none():
+    args = parse_args(["--query", "test query"])
+    assert args.seed_pdf is None
+
+
+# ---------------------------------------------------------------------------
+# extract_seed_pdf_sections
+# ---------------------------------------------------------------------------
+
+from generate_ideas_from_mcp import extract_seed_pdf_sections
+
+
+def test_extract_seed_pdf_sections_returns_sections_keyed_by_paper_id():
+    paper = {
+        "paperId": "abc123",
+        "authors": [{"name": "Karkou, V."}],
+        "year": 2017,
+    }
+    mock_sections = {"Discussion": "[Karkou2017] DMT showed significant effects."}
+    with patch("generate_ideas_from_mcp.extract_sections", return_value=mock_sections):
+        result = extract_seed_pdf_sections("/path/to/paper.pdf", paper)
+    assert result == {"abc123": mock_sections}
+
+
+def test_extract_seed_pdf_sections_builds_citation_key_from_author_year():
+    paper = {
+        "paperId": "xyz999",
+        "authors": [{"name": "Jane Smith"}, {"name": "Bob Jones"}],
+        "year": 2022,
+    }
+    with patch("generate_ideas_from_mcp.extract_sections", return_value={"Results": "text"}) as mock_es:
+        extract_seed_pdf_sections("/path/paper.pdf", paper)
+    ck = mock_es.call_args[1].get("citation_key") or mock_es.call_args[0][1]
+    assert ck == "Smith2022"
+
+
+def test_extract_seed_pdf_sections_returns_empty_when_no_sections():
+    paper = {"paperId": "abc123", "authors": [{"name": "Brown"}], "year": 2020}
+    with patch("generate_ideas_from_mcp.extract_sections", return_value={}):
+        result = extract_seed_pdf_sections("/path/paper.pdf", paper)
+    assert result == {}
+
+
+def test_extract_seed_pdf_sections_handles_missing_authors():
+    paper = {"paperId": "abc123", "authors": [], "year": 2019}
+    with patch("generate_ideas_from_mcp.extract_sections", return_value={"Discussion": "text"}):
+        result = extract_seed_pdf_sections("/path/paper.pdf", paper)
+    assert result == {"abc123": {"Discussion": "text"}}
