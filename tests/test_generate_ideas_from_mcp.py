@@ -408,6 +408,21 @@ def test_write_library_html_no_supabase_no_tag_fetch(tmp_path):
     assert "SUPABASE_URL" not in content
 
 
+def test_write_library_html_tab1_active(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    # Tab 1 button must NOT have the disabled class or soon-badge
+    assert 'class="tab-btn disabled"' not in content
+    assert "soon-badge" not in content
+
+
+def test_write_library_html_tab1_panel_present(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    assert 'id="tab1-panel"' in out.read_text()
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 

@@ -448,10 +448,8 @@ button.btn-copy.copied{background:#e8f5e9;border-color:#2e7d32;color:#2e7d32}
 .tab-bar{display:flex;border-bottom:2px solid #e0e0e0;margin-bottom:28px}
 .tab-btn{padding:10px 20px;border:none;background:none;cursor:pointer;font-size:15px;color:#555;border-bottom:3px solid transparent;margin-bottom:-2px}
 .tab-btn.active{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:600}
-.tab-btn.disabled{color:#bbb;cursor:default;pointer-events:none}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
-.soon-badge{font-size:11px;background:#f0f0f0;color:#999;padding:2px 6px;border-radius:8px;margin-left:6px;vertical-align:middle}
 """
 _LIBRARY_HTML_CSS_LAUNCH = (
     ".idea-row{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #efefef;cursor:pointer}"
@@ -582,10 +580,19 @@ def write_library_html(
     extra_css = ""
     safe_ollama = (ollama_base_url or "http://localhost:11434").replace("\\", "/")
     js_constants = f'const OLLAMA_BASE_URL = "{_esc(safe_ollama)}";\n'
+    tab1_panel = ""
     tab3_btn = ""
     tab3_panel = ""
     localstorage_lastpath = ""
-    tab3_restore_js = ""
+    tab_restore_js = """  var lastTab = localStorage.getItem('activeTab') || 'tab2';
+  var panelEl = document.getElementById(lastTab + '-panel');
+  var btnEl = document.getElementById(lastTab + '-btn');
+  if (panelEl && btnEl) {
+    document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    panelEl.classList.add('active');
+    btnEl.classList.add('active');
+  }"""
     tab3_init_js = ""
     tab3_update_js = ""
     if ideas:
@@ -637,13 +644,6 @@ def write_library_html(
 </div>
 </div>"""
         localstorage_lastpath = "localStorage.setItem('lastIdeasPath', LOAD_IDEAS_PATH);"
-        tab3_restore_js = """  var lastTab = localStorage.getItem('activeTab') || 'tab2';
-  if (lastTab === 'tab3' && document.getElementById('tab3-panel')) {
-    document.getElementById('tab2-btn').classList.remove('active');
-    document.getElementById('tab3-btn').classList.add('active');
-    document.getElementById('tab2-panel').classList.remove('active');
-    document.getElementById('tab3-panel').classList.add('active');
-  }"""
         tab3_init_js = """  var lastModel = localStorage.getItem('lastModel');
   fetch(OLLAMA_BASE_URL + '/api/tags')
     .then(function(r) { return r.json(); })
@@ -779,9 +779,12 @@ function updateRm() {{
 <h1>&#x1F4DA; Library download list</h1>
 <div class="meta">Generated {today} &middot; {stem} &middot; {n_pw + n_bl} to fetch, {n_dl} auto-downloaded</div>
 <div class="tab-bar">
-  <button class="tab-btn disabled" tabindex="-1">&#9881;&#65039; Generate ideas <span class="soon-badge">soon</span></button>
+  <button class="tab-btn" id="tab1-btn" onclick="showTab('tab1', this)">&#9881;&#65039; Generate ideas</button>
   <button class="tab-btn active" id="tab2-btn" onclick="showTab('tab2', this)">&#x1F4E5; Papers</button>
   {tab3_btn}
+</div>
+<div id="tab1-panel" class="tab-panel">
+{tab1_panel}
 </div>
 <div id="tab2-panel" class="tab-panel active">
 {tab2_content}
@@ -798,7 +801,7 @@ function showTab(tab, btn) {{
 }}
 document.addEventListener('DOMContentLoaded', function() {{
   {localstorage_lastpath}
-{tab3_restore_js}
+{tab_restore_js}
 {tab3_init_js}
 }});
 function copyFilename(btn) {{
