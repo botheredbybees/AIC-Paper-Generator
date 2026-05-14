@@ -390,6 +390,24 @@ def test_write_library_html_lastIdeasPath_written_on_load(tmp_path):
     assert "lastIdeasPath" in content
 
 
+def test_write_library_html_supabase_constants_embedded(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out),
+                       supabase_url="http://192.168.1.20:8000",
+                       supabase_anon_key="eyJtestkey")
+    content = out.read_text()
+    assert "http://192.168.1.20:8000" in content
+    assert "eyJtestkey" in content
+
+
+def test_write_library_html_no_supabase_no_tag_fetch(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    assert "gen-tag-list" not in content
+    assert "SUPABASE_URL" not in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 

@@ -490,6 +490,8 @@ def write_library_html(
     ideas: list[dict] | None = None,
     ideas_path: str | None = None,
     ollama_base_url: str | None = None,
+    supabase_url: str | None = None,
+    supabase_anon_key: str | None = None,
 ) -> None:
     """Write a standalone interactive HTML library download page."""
     import json as _json
@@ -578,7 +580,8 @@ def write_library_html(
     stem = Path(output_path).stem
 
     extra_css = ""
-    js_constants = ""
+    safe_ollama = (ollama_base_url or "http://localhost:11434").replace("\\", "/")
+    js_constants = f'const OLLAMA_BASE_URL = "{_esc(safe_ollama)}";\n'
     tab3_btn = ""
     tab3_panel = ""
     localstorage_lastpath = ""
@@ -592,10 +595,8 @@ def write_library_html(
             for i, idea in enumerate(ideas)
         ]
         safe_path = (ideas_path or "").replace("\\", "/")
-        safe_ollama = (ollama_base_url or "http://localhost:11434").replace("\\", "/")
-        js_constants = (
+        js_constants += (
             f'const LOAD_IDEAS_PATH = "{_esc(safe_path)}";\n'
-            f'const OLLAMA_BASE_URL = "{_esc(safe_ollama)}";\n'
             f'const IDEA_LIST = {_json.dumps(idea_items)};'
         )
         idea_rows = "\n".join(_idea_row(idea, i) for i, idea in enumerate(ideas))
@@ -692,6 +693,13 @@ function copyCmd(btn) {
     setTimeout(function() { btn.textContent = orig; btn.classList.remove('copied'); }, 2000);
   });
 }"""
+
+    if supabase_url and supabase_anon_key:
+        safe_sb_url = supabase_url.replace("\\", "/")
+        js_constants += (
+            f'\nconst SUPABASE_URL = "{_esc(safe_sb_url)}";\n'
+            f'const SUPABASE_ANON_KEY = "{_esc(supabase_anon_key)}";'
+        )
 
     if blocked_oa:
         extra_css += _LIBRARY_HTML_CSS_BLOCKED
@@ -1098,6 +1106,8 @@ async def _main(args: argparse.Namespace) -> None:
             ideas=ideas or None,
             ideas_path=args.output,
             ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
+            supabase_url=os.environ.get("SUPABASE_URL"),
+            supabase_anon_key=os.environ.get("SUPABASE_ANON_KEY"),
         )
 
     if args.append and os.path.exists(args.output):
