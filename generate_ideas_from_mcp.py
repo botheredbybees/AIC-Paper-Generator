@@ -645,6 +645,7 @@ def attach_private_keys(
     paywalled: list[dict] | None = None,
     oa_fulltext: dict | None = None,
     blocked_oa: list[dict] | None = None,
+    downloaded: list[tuple[dict, str]] | None = None,
 ) -> dict:
     """Attach private metadata keys to an idea dict for downstream use."""
     result = dict(idea)
@@ -654,6 +655,7 @@ def attach_private_keys(
     result["_paywalled"] = paywalled or []
     result["_blocked_oa"] = blocked_oa or []
     result["_oa_fulltext"] = oa_fulltext or {}
+    result["_downloaded"] = downloaded or []
     return result
 
 
@@ -843,6 +845,7 @@ async def _main(args: argparse.Namespace) -> None:
             oa_papers, paywalled_papers = classify_papers(s2_papers)
 
             blocked_oa_papers: list[dict] = []
+            downloaded_papers: list[tuple[dict, str]] = []
             if args.fetch_fulltext and oa_papers:
                 oa_with_pdf = [p for p in oa_papers if (p.get("openAccessPdf") or {}).get("url")]
                 print(f"    [PDF] {len(oa_with_pdf)} of {len(oa_papers)} OA paper(s) have PDF URLs"
@@ -867,6 +870,7 @@ async def _main(args: argparse.Namespace) -> None:
                             print(f"      [PDF] {bib_key}: download failed ({exc})")
                             blocked_oa_papers.append(p)
                             continue
+                    downloaded_papers.append((p, pdf_dest.name))
                     sections = extract_sections(str(pdf_dest), citation_key=bib_key)
                     if sections:
                         oa_fulltext[bib_key] = sections
@@ -879,7 +883,8 @@ async def _main(args: argparse.Namespace) -> None:
                 continue
 
             ideas.append(attach_private_keys(idea, topic, s2_papers, paywalled_papers, oa_fulltext,
-                                              blocked_oa=blocked_oa_papers))
+                                              blocked_oa=blocked_oa_papers,
+                                              downloaded=downloaded_papers))
             print(f"    Generated idea: {idea.get('Name', 'unknown')!r}")
 
     print(f"\n[STAGE 4/4] Writing output — {len(ideas)} idea(s) generated")
