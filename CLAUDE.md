@@ -171,10 +171,15 @@ python generate_ideas_from_mcp.py \
   --model ollama/qwen2.5:14b \
   --output ai_scientist/ideas/elder_clowning.json
 
+# List ideas before committing to an index
+python launch_proposal_writer.py \
+  --load_ideas ai_scientist/ideas/elder_clowning.json \
+  --list-ideas
+
 # Stage 2: write 4-page PDF (2-5 min)
 python launch_proposal_writer.py \
   --load_ideas ai_scientist/ideas/elder_clowning.json \
-  --idea_idx 0 \
+  --idea_idx 1 \
   --model_writeup ollama/qwen2.5:14b \
   --model_citation ollama/qwen2.5:14b \
   --num_cite_rounds 3
@@ -188,7 +193,7 @@ Output: `experiments/<timestamp>_<name>_proposal_0/<name>_reflection1.pdf`
 pytest tests/ -v
 ```
 
-35 tests, all passing. Tests mock MCP, S2, and LLM calls — no external services needed.
+182 tests, all passing. Tests mock MCP, S2, and LLM calls — no external services needed.
 
 ### Known Issues
 
@@ -196,8 +201,28 @@ pytest tests/ -v
 - Tectonic emits `TeX rerun seems needed, stopping at 6 passes` when bibliography references shift between passes. The PDF is still correct.
 - `gather_citations()` returns `None` when all S2 calls fail; guarded with `or ""` in `launch_proposal_writer.py`.
 
+### Citation Behaviour
+
+- **Review mode** (`--writeup-type review`): a `_scrub_undefined_cites()` post-processor strips any `\citep{}`/`\citet{}` commands whose keys do not exist in `references.bib` before compilation. This prevents `?` appearing in the PDF when the LLM invents citation keys.
+- **ICBINB mode**: `_splice_llm_latex()` preserves the known-good preamble including `\author{}` — injected author text is wrapped in `\author{}` to prevent bare preamble text from breaking LaTeX.
+- **APA 7 in-text format**: the review template uses `\usepackage[authoryear,round]{natbib}` so `\citep{key}` renders `(Author, Year)`. ICBINB gets the same via `iclr2025.sty`.
+
+### Library HTML
+
+`library.html` is generated alongside the ideas JSON whenever papers are found or ideas are produced. It has a 3-tab layout:
+
+- **Tab 1 — ⚙️ Generate ideas** — disabled placeholder (future)
+- **Tab 2 — 📥 Papers** — three sections: Paywalled Papers (UTAS EZproxy links + clipboard filename button), Publisher-Blocked Downloads (403 to bots; direct URL + library fallback), Auto-Downloaded Papers (checkboxes + rm command builder)
+- **Tab 3 — 🚀 Launch writer** — interactive form that builds a `launch_proposal_writer.py` command: idea selector (radio buttons), writeup type, model (fetched from Ollama API on load), cite rounds, live command textarea, copy button
+
+Tab state, last model, and last ideas path are persisted in `localStorage`. Opening any freshly-generated `library.html` updates `lastIdeasPath` automatically.
+
 ### Spec and Design Docs
 
 - `docs/superpowers/specs/2026-05-10-mcp-to-ai-scientist-design.md`
+- `docs/superpowers/specs/2026-05-14-library-html-design.md`
+- `docs/superpowers/specs/2026-05-14-library-html-tabs-design.md`
 - `docs/superpowers/plans/2026-05-10-mcp-to-ai-scientist.md`
+- `docs/superpowers/plans/2026-05-14-library-html.md`
+- `docs/superpowers/plans/2026-05-14-library-html-tabs.md`
 - `programmers_notes.md` — implementation internals and gotchas

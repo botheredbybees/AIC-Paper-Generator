@@ -260,10 +260,10 @@ Generates a full APA 7 qualitative literature review using recursive Semantic Sc
 generate_ideas_from_mcp.py --recursive --fetch-fulltext --library-list ...
   • Seed S2 search → fetch citations + references for each seed paper
   • Classify: open-access bucket (download full text) vs paywalled bucket
-  • Write library.html — interactive download page with three sections:
-      "Paywalled Papers" (isOpenAccess=False) with UTAS Primo/EZproxy links + clipboard filename button
-      "Publisher-Blocked Downloads" (403 to bots) with direct URL + library fallback + clipboard button
-      "Auto-Downloaded Papers" checkboxes with rm command builder for the PDF pool
+  • Write library.html — tabbed interactive page:
+      Tab 2 "📥 Papers": paywalled (EZproxy links + clipboard filename), blocked (direct URL + library fallback),
+        auto-downloaded (checkboxes + rm command builder)
+      Tab 3 "🚀 Launch writer": idea selector, model/writeup-type form, live command textarea + copy button
   • Attach _s2_papers, _oa_fulltext, _paywalled, _blocked_oa to the ideas JSON
         │
         ▼  ai_scientist/ideas/<topic>.json

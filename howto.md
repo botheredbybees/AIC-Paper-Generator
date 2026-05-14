@@ -165,7 +165,9 @@ In this mode, a synthetic topic is built from the seed paper's title and abstrac
 
 ## Stage 2 — Retrieve Paywalled Papers (Manual)
 
-Open `ai_scientist/ideas/library.html` in a browser. It has three sections:
+Open `ai_scientist/ideas/library.html` in a browser. It has a tab bar with two active tabs:
+
+**📥 Papers tab** (Tab 2, default) — three sections:
 
 **Paywalled Papers** — `isOpenAccess=False` in S2; only accessible via your institution. Each entry has:
 - **🔗 Open in Library** — opens the UTAS EZproxy link for the paper
@@ -175,6 +177,8 @@ Open `ai_scientist/ideas/library.html` in a browser. It has three sections:
 - **↗ Try direct URL** — opens the publisher's PDF URL directly (usually works in a browser)
 
 **Auto-Downloaded Papers** — papers whose PDFs were successfully downloaded by `--fetch-fulltext`. Each has a checkbox; checking it adds the file to a `rm` command shown below the list so you can clean up unwanted PDFs from the pool.
+
+**🚀 Launch writer tab** (Tab 3) — builds a `launch_proposal_writer.py` command for you. Select an idea from the radio list, choose writeup type and model (populated from your Ollama instance), then click **📋 Copy command** and paste it into your terminal. The tab remembers your last model and switches back to it on the next page load.
 
 **For each paywalled or blocked paper you want to include:**
 
@@ -305,7 +309,7 @@ The template (`ai_scientist/blank_review_latex/template.tex`) has 10 placeholder
 
 **`library.html` is empty / not created**
 
-The file is only written when at least one paywalled, blocked, or auto-downloaded paper exists. If the S2 search returns only open-access results that all downloaded successfully (or `--no-novelty-check` was used), the file is not created. Check that `--recursive` was passed and that S2 returned results.
+The file is written whenever at least one paywalled paper, blocked paper, auto-downloaded paper, or generated idea exists. If S2 returned no results and no ideas were generated, the file is not created. Check that `--recursive` was passed and that S2 returned results.
 
 **PDF quality: sections not extracted**
 
