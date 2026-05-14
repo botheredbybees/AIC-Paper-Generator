@@ -730,7 +730,7 @@ def parse_args(args=None) -> argparse.Namespace:
                         dest="fetch_fulltext",
                         help="Download and extract Discussion/Results from OA PDFs (requires --recursive)")
     parser.add_argument("--library-list", default=None, dest="library_list",
-                        help="Path to write to_fetch_from_library.md (default: alongside --output)")
+                        help="Path to write library.html (default: alongside --output)")
     return parser.parse_args(args)
 
 
@@ -889,24 +889,37 @@ async def _main(args: argparse.Namespace) -> None:
 
     print(f"\n[STAGE 4/4] Writing output — {len(ideas)} idea(s) generated")
 
-    if any(idea.get("_paywalled") or idea.get("_blocked_oa") for idea in ideas):
-        library_list_path = args.library_list or str(Path(args.output).parent / "to_fetch_from_library.md")
-        all_paywalled: list[dict] = []
-        all_blocked: list[dict] = []
-        seen_ids: set[str] = set()
-        for idea in ideas:
-            for p in (idea.get("_paywalled") or []):
-                pid = p.get("paperId")
-                if pid and pid not in seen_ids:
-                    seen_ids.add(pid)
-                    all_paywalled.append(p)
-            for p in (idea.get("_blocked_oa") or []):
-                pid = p.get("paperId")
-                if pid and pid not in seen_ids:
-                    seen_ids.add(pid)
-                    all_blocked.append(p)
-        if all_paywalled or all_blocked:
-            write_library_list(all_paywalled, library_list_path, blocked_oa=all_blocked)
+    all_paywalled: list[dict] = []
+    all_blocked: list[dict] = []
+    all_downloaded: list[tuple[dict, str]] = []
+    seen_ids: set[str] = set()
+    for idea in ideas:
+        for p in (idea.get("_paywalled") or []):
+            pid = p.get("paperId")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                all_paywalled.append(p)
+        for p in (idea.get("_blocked_oa") or []):
+            pid = p.get("paperId")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                all_blocked.append(p)
+        for p, fname in (idea.get("_downloaded") or []):
+            pid = p.get("paperId")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                all_downloaded.append((p, fname))
+
+    if all_paywalled or all_blocked or all_downloaded:
+        library_list_path = args.library_list or str(Path(args.output).parent / "library.html")
+        pdfs_dir = Path(args.output).parent / "pdfs"
+        write_library_html(
+            all_paywalled,
+            library_list_path,
+            blocked_oa=all_blocked,
+            downloaded=all_downloaded or None,
+            pdfs_dir=pdfs_dir if all_downloaded else None,
+        )
 
     if args.append and os.path.exists(args.output):
         try:
