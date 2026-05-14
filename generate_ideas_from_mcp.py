@@ -764,6 +764,8 @@ function lookupSeedDoi() {
         ' disabled>'
     )
 
+    seed_doi_onblur = ' onblur="lookupSeedDoi()"' if (supabase_url and supabase_anon_key) else ''
+
     tab1_section1 = f"""<h3>&#x1F50D; What to search for</h3>
 <div class="form-row">
   <div class="field" style="flex:2">
@@ -798,7 +800,7 @@ function lookupSeedDoi() {
   <div class="field" style="flex:2">
     <label>Seed DOI <span class="field-help">(optional)</span></label>
     <input type="text" id="gen-seed-doi" placeholder="10.1002/14651858.CD011022.pub2"
-           oninput="updateGenCmd()" onblur="lookupSeedDoi()">
+           oninput="updateGenCmd()"{seed_doi_onblur}>
   </div>
 </div>"""
 

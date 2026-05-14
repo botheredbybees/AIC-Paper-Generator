@@ -509,6 +509,13 @@ def test_write_library_html_seed_doi_lookup_js(tmp_path):
     assert "gen-query" in content
 
 
+def test_write_library_html_no_supabase_no_seed_doi_onblur(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    assert 'onblur="lookupSeedDoi()"' not in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 
