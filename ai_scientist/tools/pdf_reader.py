@@ -116,3 +116,29 @@ def _find_sections(
         i += 1
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# DOI extraction from local PDF
+# ---------------------------------------------------------------------------
+
+_DOI_RE = re.compile(r"(?:doi[:\s/]+)(10\.\d{4,}/\S+)", re.IGNORECASE)
+_DOI_STRIP = ".,"
+
+
+def extract_doi_from_pdf(path: str) -> str | None:
+    """
+    Extract a DOI from a local PDF file by scanning the first few pages.
+    Returns the DOI string (e.g. '10.1002/14651858.CD011022.pub2') or None.
+    """
+    try:
+        import fitz
+        doc = fitz.open(path)
+        for i in range(min(3, len(doc))):
+            text = doc[i].get_text()
+            m = _DOI_RE.search(text)
+            if m:
+                return m.group(1).rstrip(_DOI_STRIP + ")")
+        return None
+    except Exception:
+        return None

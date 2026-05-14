@@ -9,9 +9,9 @@
 \onehalfspacing 
 \usepackage{times} % APA 7 typically prefers Times New Roman
 
-% --- APA 7 Citation Style ---
-\usepackage[style=apa, backend=biber]{biblatex}
-\addbibresource{references.bib}
+% --- APA-style bibliography (classic BibTeX, no biber required) ---
+\usepackage[authoryear,round]{natbib}
+\setcitestyle{aysep={,}}
 
 \usepackage{hyperref}
 \usepackage{titlesec}
@@ -61,6 +61,7 @@ PRACTICE_PLACEHOLDER
 CONCLUSION_PLACEHOLDER
 
 \newpage
-\printbibliography
+\bibliographystyle{apalike}
+\bibliography{references}
 
 \end{document}

@@ -339,6 +339,78 @@ def expand_papers_recursively(
     return all_papers[:max_papers]
 
 
+_S2_STOP_WORDS = {
+    "the", "a", "an", "of", "in", "for", "and", "to", "with",
+    "on", "is", "are", "by", "from", "that", "this", "at", "or",
+}
+
+
+def distil_s2_query(topic: dict, client, client_model: str) -> str:
+    """Ask the LLM to distil a focused 4-7 word S2 search phrase from topic metadata."""
+    title = topic.get("title", "")
+    domain = topic.get("domain", "")
+    findings = (topic.get("key_findings") or [])[:2]
+    concepts = (topic.get("_key_concepts") or [])[:6]
+    fallback = " ".join((topic.get("_key_concepts") or [])[:4])
+
+    prompt = (
+        "You are helping a researcher find relevant papers on Semantic Scholar. "
+        "Given a research topic, return ONE focused academic search phrase of 4-7 words "
+        "that would retrieve relevant arts and health research. "
+        "Return only the search phrase with no quotes, punctuation, or explanation.\n\n"
+        f"Topic title: {title}\n"
+        f"Domain: {domain}\n"
+        f"Key findings: {'; '.join(findings)}\n"
+        f"Key concepts: {', '.join(concepts)}"
+    )
+    try:
+        content, _ = get_response_from_llm(
+            prompt=prompt,
+            client=client,
+            model=client_model,
+            system_message="You are a research librarian specialising in arts and health.",
+            temperature=0.1,
+        )
+        query = content.strip().strip('"').strip("'").replace("\n", " ").strip()
+        query = query[:120]
+        print(f"    [S2] Distilled query: {query!r}")
+        return query
+    except Exception as exc:
+        print(f"    [S2] WARNING: distil_s2_query failed ({exc}), falling back to key_concepts")
+        return fallback
+
+
+def filter_relevant_seeds(
+    papers: list[dict],
+    topic_title: str,
+    key_concepts: list[str],
+    min_overlap: int = 2,
+) -> list[dict]:
+    """Keep papers whose title overlaps >= min_overlap meaningful words with the topic."""
+    topic_words: set[str] = set()
+    for word in topic_title.lower().split():
+        w = re.sub(r"[^a-z]", "", word)
+        if w and w not in _S2_STOP_WORDS:
+            topic_words.add(w)
+    for concept in key_concepts:
+        for part in re.split(r"[-\s]+", concept.lower()):
+            w = re.sub(r"[^a-z]", "", part)
+            if w and w not in _S2_STOP_WORDS:
+                topic_words.add(w)
+
+    accepted = []
+    for paper in papers:
+        title = (paper.get("title") or "").lower()
+        title_words = {re.sub(r"[^a-z]", "", w) for w in title.split()}
+        title_words.discard("")
+        overlap = len(topic_words & title_words)
+        status = "ACCEPT" if overlap >= min_overlap else "REJECT"
+        print(f"    [S2] {status} (overlap={overlap}): {paper.get('title', '')[:80]!r}")
+        if overlap >= min_overlap:
+            accepted.append(paper)
+    return accepted
+
+
 def classify_papers(papers: list[dict]) -> tuple[list[dict], list[dict]]:
     """Split papers into (open_access, paywalled) buckets."""
     oa = [p for p in papers if p.get("isOpenAccess")]
@@ -1237,6 +1309,7 @@ async def _main(args: argparse.Namespace) -> None:
     if args.no_novelty_check:
         print("  Skipping (--no-novelty-check set)")
 
+    client, client_model = create_client(args.model)
     ideas: list[dict] = []
     for topic in topics:
         questions = (topic.get("open_questions") or [])[:args.max_questions]
@@ -1248,14 +1321,18 @@ async def _main(args: argparse.Namespace) -> None:
             # Pre-seed with locally extracted sections from --seed-pdf (always included)
             oa_fulltext: dict[str, dict] = dict(seed_pdf_fulltext)
             if not args.no_novelty_check:
-                # Use key_concepts as S2 query when available — more focused than raw question text
                 key_concepts = topic.get("_key_concepts") or []
-                s2_query = " ".join(key_concepts[:6]) if key_concepts else question
-                if key_concepts:
-                    print(f"    [S2] Using key_concepts as query: {s2_query!r}")
+                distilled_query = distil_s2_query(topic, client, client_model)
+                distilled_papers = search_for_papers(distilled_query, result_limit=args.s2_papers) or []
+                # Multi-query union: also search by raw topic title for recall
+                title_query = topic.get("title", "")
+                if title_query:
+                    title_papers = search_for_papers(title_query, result_limit=args.s2_papers) or []
                 else:
-                    print(f"    [S2] Searching Semantic Scholar (no key_concepts, using question)...")
-                text_papers = search_for_papers(s2_query, result_limit=args.s2_papers) or []
+                    title_papers = []
+                seen_pids = {p.get("paperId") for p in distilled_papers}
+                text_papers = distilled_papers + [p for p in title_papers if p.get("paperId") not in seen_pids]
+                print(f"    [S2] {len(text_papers)} unique paper(s) from distilled + title queries")
                 # Union text-search results with DOI seed papers
                 seed_papers = doi_seed_papers + [
                     p for p in text_papers
@@ -1266,7 +1343,11 @@ async def _main(args: argparse.Namespace) -> None:
 
                 if args.recursive and seed_papers:
                     print(f"    [S2] Recursive expansion (cap={args.max_papers})...")
-                    s2_papers = expand_papers_recursively(seed_papers, max_papers=args.max_papers)
+                    filtered = filter_relevant_seeds(seed_papers, topic.get("title", ""), key_concepts)
+                    if not filtered:
+                        print(f"    [S2] WARNING: relevance gate filtered all seeds — falling back to unfiltered list")
+                        filtered = seed_papers
+                    s2_papers = expand_papers_recursively(filtered, max_papers=args.max_papers)
                     print(f"    [S2] {len(s2_papers)} paper(s) after expansion")
                 else:
                     s2_papers = seed_papers

@@ -108,7 +108,7 @@ def _splice_llm_latex(llm_latex: str, saved_preamble: str) -> str | None:
 
     # Inject the LLM's author if it looks meaningful (not "anonymous").
     if llm_author and llm_author.lower() not in ('anonymous', ''):
-        preamble = re.sub(r'%+AUTHOR%+.*?%+AUTHOR%+', llm_author, preamble, flags=re.DOTALL)
+        preamble = re.sub(r'%+AUTHOR%+.*?%+AUTHOR%+', f'\\\\author{{{llm_author}}}', preamble, flags=re.DOTALL)
 
     # Strip any \bibliographystyle or \bibliography the LLM wrote — we inject
     # the correct ones below so they appear exactly once with the right args.

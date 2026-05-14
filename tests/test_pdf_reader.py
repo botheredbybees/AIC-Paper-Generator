@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -136,3 +136,65 @@ def test_extract_sections_uses_default_sections_when_none_given(tmp_path):
         result = extract_sections(str(fake_pdf), citation_key="Ali2023")
 
     assert "Participant Voices" in result
+
+
+# ---------------------------------------------------------------------------
+# extract_doi_from_pdf
+# ---------------------------------------------------------------------------
+
+from ai_scientist.tools.pdf_reader import extract_doi_from_pdf
+
+
+def _mock_fitz_doc(page_texts: list[str], metadata: dict | None = None):
+    """Build a mock fitz document with the given per-page text content."""
+    pages = []
+    for text in page_texts:
+        page = MagicMock()
+        page.get_text.return_value = text
+        pages.append(page)
+    doc = MagicMock()
+    doc.__len__ = MagicMock(return_value=len(pages))
+    doc.__getitem__ = MagicMock(side_effect=lambda i: pages[i])
+    doc.metadata = metadata or {}
+    return doc
+
+
+def test_extract_doi_from_pdf_finds_doi_in_page_text():
+    doc = _mock_fitz_doc(["doi: 10.1002/14651858.CD011022.pub2\nSome abstract text."])
+    with patch("fitz.open", return_value=doc):
+        result = extract_doi_from_pdf("/fake/paper.pdf")
+    assert result == "10.1002/14651858.CD011022.pub2"
+
+
+def test_extract_doi_from_pdf_returns_none_when_no_doi():
+    doc = _mock_fitz_doc(["No DOI here. Just plain text about something."])
+    with patch("fitz.open", return_value=doc):
+        result = extract_doi_from_pdf("/fake/paper.pdf")
+    assert result is None
+
+
+def test_extract_doi_from_pdf_strips_trailing_punctuation():
+    doc = _mock_fitz_doc(["Cite this paper (doi:10.1234/test.paper). See methods."])
+    with patch("fitz.open", return_value=doc):
+        result = extract_doi_from_pdf("/fake/paper.pdf")
+    assert result is not None
+    assert not result.endswith(".")
+    assert not result.endswith(")")
+
+
+def test_extract_doi_from_pdf_case_insensitive():
+    doc = _mock_fitz_doc(["DOI: 10.5678/uppercase-doi"])
+    with patch("fitz.open", return_value=doc):
+        result = extract_doi_from_pdf("/fake/paper.pdf")
+    assert result == "10.5678/uppercase-doi"
+
+
+def test_extract_doi_from_pdf_checks_multiple_pages():
+    doc = _mock_fitz_doc([
+        "Title page, no DOI.",
+        "Abstract page.\nDOI: 10.9999/second-page",
+        "Methods section.",
+    ])
+    with patch("fitz.open", return_value=doc):
+        result = extract_doi_from_pdf("/fake/paper.pdf")
+    assert result == "10.9999/second-page"

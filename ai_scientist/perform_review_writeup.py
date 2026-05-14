@@ -18,9 +18,10 @@ _QUALITATIVE_SYSTEM = (
     "You are a qualitative researcher in Creative Arts and Health writing an academic "
     "literature review. Use a descriptive, interpretive tone. Synthesise participant "
     "experiences, intervention methodologies, and thematic gaps. Avoid quantitative "
-    "framing. Do not fabricate citations — only reference material explicitly provided. "
-    "Write in LaTeX-safe plain text: do not use \\section{}, \\cite{}, or other LaTeX "
-    "commands unless the instruction specifically requests it."
+    "framing. Do not fabricate citations — only cite papers explicitly provided in the "
+    "context. Use \\citep{key} for parenthetical citations (Author, Year) and \\citet{key} "
+    "for narrative citations where the author name appears in the sentence. The key is shown "
+    "in [brackets] before each reference. Do not use any other LaTeX commands."
 )
 
 
@@ -74,18 +75,37 @@ def cluster_themes(abstracts: list[dict], model: str) -> list[str]:
 # Context builders
 # ---------------------------------------------------------------------------
 
+def _cite_key(paper: dict) -> str:
+    """Generate the BibTeX cite key for a paper (mirrors bibtex_from_s2_paper logic)."""
+    styles = paper.get("citationStyles") or {}
+    if styles.get("bibtex"):
+        m = re.match(r'@\w+\{([^,]+),', styles["bibtex"])
+        if m:
+            return m.group(1)
+    authors = paper.get("authors") or []
+    year = str(paper.get("year") or "0000")
+    first_last = ""
+    if authors:
+        name_parts = (authors[0].get("name") or "").split()
+        first_last = name_parts[-1] if name_parts else "unknown"
+    return re.sub(r"[^a-z0-9]", "", f"{first_last.lower()}{year}")
+
+
 def build_tier3_abstracts_text(papers: list[dict]) -> str:
-    """Format Tier 3 (S2 abstracts) as a readable block for LLM context."""
+    """Format Tier 3 (S2 abstracts) as a readable block for LLM context.
+    Each entry is prefixed with [cite_key] so the LLM can use \\citep{key}.
+    """
     if not papers:
         return ""
     lines = []
     for p in papers:
+        key = _cite_key(p)
         authors = p.get("authors") or []
         first = (authors[0].get("name") or "Author") if authors else "Author"
         year = p.get("year") or "?"
         title = p.get("title") or "Unknown"
         abstract = (p.get("abstract") or "")[:300]
-        lines.append(f"- {first} ({year}). {title}. {abstract}")
+        lines.append(f"[{key}] {first} ({year}). {title}. {abstract}")
     return "\n".join(lines)
 
 
@@ -127,6 +147,29 @@ def fill_placeholder(
 # BibTeX reference generation
 # ---------------------------------------------------------------------------
 
+# Characters that break LaTeX when they appear in .bib field values.
+# Applied AFTER bibtex_from_s2_paper so we catch both S2-supplied and
+# generated entries.  Order matters: escape \ before & to avoid double-escaping.
+_BIB_SANITIZE = [
+    ("—", "---"),   # em dash
+    ("–", "--"),    # en dash
+    ("‐", "-"),     # unicode hyphen
+    ("‑", "-"),     # non-breaking hyphen
+    ("“", "``"),    # left double quote
+    ("”", "''"),    # right double quote
+    ("‘", "`"),     # left single quote
+    ("’", "'"),     # right single quote
+    (" ", " "),     # non-breaking space
+    ("&", r"\&"),        # unescaped ampersand (fatal in LaTeX tables/titles)
+]
+
+
+def _sanitize_bib_entry(entry: str) -> str:
+    for old, new in _BIB_SANITIZE:
+        entry = entry.replace(old, new)
+    return entry
+
+
 def _make_bibtex(papers: list[dict]) -> str:
     """Generate a minimal references.bib from S2 paper dicts."""
     # Lazy import to avoid circular imports; requires repo root on sys.path
@@ -134,7 +177,7 @@ def _make_bibtex(papers: list[dict]) -> str:
     entries = []
     seen: set[str] = set()
     for p in papers:
-        entry = bibtex_from_s2_paper(p)
+        entry = _sanitize_bib_entry(bibtex_from_s2_paper(p))
         if entry not in seen:
             seen.add(entry)
             entries.append(entry)
@@ -192,11 +235,16 @@ def perform_review_writeup(
         ),
         "INTRODUCTION_PLACEHOLDER": fill_placeholder(
             "INTRODUCTION_PLACEHOLDER",
-            context=f"MCP Synthesis (ground truth):\n{tier1_synthesis}\n\nOpen question:\n{idea.get('Short Hypothesis', '')}",
+            context=(
+                f"MCP Synthesis (ground truth):\n{tier1_synthesis}\n\n"
+                f"Open question:\n{idea.get('Short Hypothesis', '')}\n\n"
+                f"Key references (cite with \\cite{{key}}):\n{tier3_text[:2000]}"
+            ),
             instruction=(
                 "Write an Introduction section (~300 words) that frames the open question, "
                 "establishes the significance of arts-based health research, and previews the review structure. "
-                "Ground the argument in the synthesis provided."
+                "Ground the argument in the synthesis provided. "
+                "Cite relevant papers using \\citep{key} where [key] is shown before each reference."
             ),
             model=big_model,
         ),
@@ -205,12 +253,13 @@ def perform_review_writeup(
             context=(
                 f"Thematic clusters:\n{themes_text}\n\n"
                 f"Evidence (Tier 2 - full text):\n{tier2_text[:3000]}\n\n"
-                f"Field map (Tier 3 - abstracts):\n{tier3_text[:4000]}"
+                f"Field map (Tier 3 - abstracts with cite keys):\n{tier3_text[:4000]}"
             ),
             instruction=(
                 "Write a Literature Review and Synthesis section (~600 words) organised around "
                 "the thematic clusters listed above. For each cluster, summarise the evidence and "
-                "name any methodological gaps. Prioritise Tier 2 full-text evidence over abstracts."
+                "name any methodological gaps. Prioritise Tier 2 full-text evidence over abstracts. "
+                "Cite papers using \\citep{key} where [key] appears in [brackets] before each reference."
             ),
             model=big_model,
         ),
@@ -219,17 +268,23 @@ def perform_review_writeup(
             context=f"Hypothesis: {idea.get('Short Hypothesis', '')}\nKey findings: {', '.join(idea.get('Related Work', '').split('.')[:3])}",
             instruction=(
                 "Write a Theoretical and Creative Framework section (~250 words) explaining "
-                "how arts practice intersects with health theory for this research question."
+                "how arts practice intersects with health theory for this research question. "
+                "Do not include any citation commands."
             ),
             model=big_model,
         ),
         "ANALYSIS_PLACEHOLDER": fill_placeholder(
             "ANALYSIS_PLACEHOLDER",
-            context=tier2_text[:5000] or tier3_text[:3000],
+            context=(
+                f"Source material (full text):\n{tier2_text[:4000]}\n\n"
+                f"Reference list (cite with \\cite{{key}}):\n{tier3_text[:2000]}"
+            ),
             instruction=(
                 "Write a Thematic Analysis section (~400 words) that qualitatively synthesises "
                 "participant experiences, intervention methodologies, and practitioner perspectives "
-                "found in the provided source material."
+                "found in the provided source material. "
+                "Cite papers using \\citep{key} where [key] appears in [brackets] in the reference list. "
+                "Only cite keys that appear in the reference list — do not invent keys."
             ),
             model=big_model,
         ),
@@ -267,20 +322,65 @@ def perform_review_writeup(
     if bib_content:
         bib_path.write_text(bib_content, encoding="utf-8")
 
+    # --- Scrub citation keys not present in references.bib ---
+    if bib_content:
+        valid_keys = _valid_bib_keys(bib_content)
+        cleaned, removed = _scrub_undefined_cites(template, valid_keys)
+        if removed:
+            print(f"[Review] Scrubbed {len(removed)} undefined citation key(s): {removed}")
+            template_path.write_text(cleaned, encoding="utf-8")
+
     # --- Compile with tectonic ---
     print(f"[Review] Compiling PDF with tectonic...")
     result = subprocess.run(
-        ["tectonic", str(template_path)],
+        ["tectonic", "template.tex"],
         cwd=str(latex_dest),
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         print(f"[Review] WARNING: tectonic exited {result.returncode}")
-        print(result.stderr[:500])
+        if result.stdout:
+            print("[Review] stdout:\n" + result.stdout)
+        if result.stderr:
+            print("[Review] stderr:\n" + result.stderr)
+        log_path = latex_dest / "compile.log"
+        log_path.write_text(
+            f"=== stdout ===\n{result.stdout}\n=== stderr ===\n{result.stderr}",
+            encoding="utf-8",
+        )
+        print(f"[Review] Full log saved to {log_path}")
     else:
         pdf = latex_dest / "template.pdf"
         print(f"[Review] PDF: {pdf}")
+
+
+def _valid_bib_keys(bib_text: str) -> set[str]:
+    """Extract citation keys from a BibTeX string."""
+    return set(re.findall(r'@\w+\{([^,\s]+)', bib_text))
+
+
+def _scrub_undefined_cites(latex: str, valid_keys: set[str]) -> tuple[str, list[str]]:
+    r"""Remove \citep/\citet/\cite commands whose keys are all undefined.
+
+    For citations with multiple keys (e.g. \citep{a,b,c}), strips only the
+    undefined keys; removes the entire command if none remain.
+    Returns (cleaned_latex, list_of_removed_keys).
+    """
+    removed: list[str] = []
+
+    def _filter(m: re.Match) -> str:
+        cmd = m.group(1)   # citep / citet / cite
+        keys = [k.strip() for k in m.group(2).split(",")]
+        good = [k for k in keys if k in valid_keys]
+        bad = [k for k in keys if k not in valid_keys]
+        removed.extend(bad)
+        if not good:
+            return ""
+        return f"\\{cmd}{{{', '.join(good)}}}"
+
+    cleaned = re.sub(r'\\(cite[pt]?)\{([^}]+)\}', _filter, latex)
+    return cleaned, removed
 
 
 _LATEX_ESCAPE_MAP = {
@@ -296,11 +396,38 @@ _LATEX_ESCAPE_MAP = {
     "^": r"\textasciicircum{}",
 }
 
+# Common Unicode typographic characters that LLMs produce but 8-bit TeX fonts can't render.
+# Applied before special-char escaping so none of these introduce backslashes.
+_UNICODE_TO_LATEX = [
+    ("—", "---"),   # em dash
+    ("–", "--"),    # en dash
+    ("‘", "`"),     # left single quote
+    ("’", "'"),     # right single quote
+    ("“", "``"),    # left double quote
+    ("”", "''"),    # right double quote
+    ("…", "..."),   # ellipsis
+    (" ", " "),     # non-breaking space
+    ("•", "-"),     # bullet
+]
+
+
+_CITE_RE = re.compile(r'\\cite[pt]?\{[^}]+\}')
+
 
 def _latex_safe(text: str) -> str:
-    """Escape special LaTeX characters in a single pass to avoid double-escaping."""
-    return re.sub(
-        r'[\\&%$#_{}~^]',
-        lambda m: _LATEX_ESCAPE_MAP[m.group()],
-        text
-    )
+    """Escape special LaTeX characters, preserving \\citep/\\citet/\\cite{key} commands."""
+    # Stash \cite[pt]{...} commands so their braces aren't escaped
+    stash: dict[str, str] = {}
+
+    def _stash(m: re.Match) -> str:
+        tok = f"\x00{len(stash)}\x00"
+        stash[tok] = m.group()
+        return tok
+
+    text = _CITE_RE.sub(_stash, text)
+    for uni, replacement in _UNICODE_TO_LATEX:
+        text = text.replace(uni, replacement)
+    text = re.sub(r'[\\&%$#_{}~^]', lambda m: _LATEX_ESCAPE_MAP[m.group()], text)
+    for tok, cmd in stash.items():
+        text = text.replace(tok, cmd)
+    return text

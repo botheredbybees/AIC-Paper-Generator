@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from launch_proposal_writer import prepopulate_citations, setup_experiment_folder, write_idea_md, write_synthetic_summaries, PROPOSAL_NOTE
+from ai_scientist.perform_icbinb_writeup import _splice_llm_latex
 
 
 def _make_idea(**overrides) -> dict:
@@ -294,3 +295,59 @@ def test_review_writeup_type_calls_perform_review_writeup(tmp_path):
         main()
 
     mock_rw.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _splice_llm_latex — preamble author wrapper regression
+# ---------------------------------------------------------------------------
+
+_ICBINB_PREAMBLE = """\
+\\documentclass{article}
+\\usepackage{iclr2025,times}
+
+\\title{
+%%%%%%%%%TITLE%%%%%%%%%
+TITLE HERE
+%%%%%%%%%TITLE%%%%%%%%%
+}
+
+%%%%%%%%%AUTHOR%%%%%%%%%
+\\author{Research Proposal}
+%%%%%%%%%AUTHOR%%%%%%%%%
+
+\\newcommand{\\fix}{\\marginpar{FIX}}
+\\begin{filecontents}{references.bib}
+@book{x, title={X}}
+\\end{filecontents}
+"""
+
+_LLM_DOC = """\
+\\documentclass{article}
+\\title{My Generated Title}
+\\author{Research Proposal}
+\\begin{document}
+\\maketitle
+\\begin{abstract}
+This is the abstract with enough content to pass the minimum body character check
+and make the splice logic happy so the test can verify the author line.
+It needs to be at least five hundred characters long to satisfy the guard.
+Padding: Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod
+tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis
+nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+\\end{abstract}
+\\section{Introduction}
+Body text here discussing therapeutic clowning interventions in healthcare settings.
+\\end{document}
+"""
+
+
+def test_splice_llm_latex_author_is_wrapped():
+    """\\author{} must not be stripped when the LLM echoes back the placeholder."""
+    result = _splice_llm_latex(_LLM_DOC, _ICBINB_PREAMBLE)
+    assert result is not None
+    # The preamble section (before \begin{document}) must contain \author{...}
+    preamble_part = result.split('\\begin{document}')[0]
+    assert '\\author{' in preamble_part, (
+        "\\author{} wrapper was stripped from the preamble — bare text breaks LaTeX"
+    )
+    assert 'Research Proposal' in preamble_part

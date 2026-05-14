@@ -1053,6 +1053,8 @@ def test_ideas_json_has_s2_papers_key_after_recursive(tmp_path, monkeypatch):
     }
 
     with upatch("generate_ideas_from_mcp.fetch_mcp_topics", new=AsyncMock(return_value=[topic])), \
+         upatch("generate_ideas_from_mcp.create_client", return_value=(MagicMock(), "test-model")), \
+         upatch("generate_ideas_from_mcp.distil_s2_query", return_value="test distilled query"), \
          upatch("generate_ideas_from_mcp.search_for_papers", return_value=[seed]), \
          upatch("generate_ideas_from_mcp.expand_papers_recursively", return_value=[seed]), \
          upatch("generate_ideas_from_mcp.translate_to_idea", return_value={
@@ -1219,3 +1221,161 @@ def test_extract_seed_pdf_sections_handles_missing_authors():
     with patch("generate_ideas_from_mcp.extract_sections", return_value={"Discussion": "text"}):
         result = extract_seed_pdf_sections("/path/paper.pdf", paper)
     assert result == {"abc123": {"Discussion": "text"}}
+
+
+# ---------------------------------------------------------------------------
+# distil_s2_query
+# ---------------------------------------------------------------------------
+
+from generate_ideas_from_mcp import distil_s2_query
+
+
+def test_distil_s2_query_normal_case():
+    topic = {
+        "title": "Therapeutic Clowning for Older Adults",
+        "domain": "intervention",
+        "key_findings": ["Reduces anxiety", "Improves mood"],
+        "_key_concepts": ["therapeutic clowning", "older adults", "wellbeing"],
+    }
+    with patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
+        mock_llm.return_value = ("therapeutic clowning dementia care wellbeing", [])
+        result = distil_s2_query(topic, MagicMock(), "ollama/qwen2.5:14b")
+    assert result == "therapeutic clowning dementia care wellbeing"
+    assert len(result) <= 120
+
+
+def test_distil_s2_query_strips_quotes_and_newlines():
+    topic = {
+        "title": "DMT Dementia",
+        "domain": "intervention",
+        "key_findings": [],
+        "_key_concepts": ["dance movement therapy", "dementia"],
+    }
+    with patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
+        mock_llm.return_value = ('"dance movement therapy dementia\n"', [])
+        result = distil_s2_query(topic, MagicMock(), "ollama/qwen2.5:14b")
+    assert '"' not in result
+    assert "\n" not in result
+    assert result == "dance movement therapy dementia"
+
+
+def test_distil_s2_query_truncates_to_120_chars():
+    topic = {
+        "title": "Long Topic",
+        "domain": "intervention",
+        "key_findings": [],
+        "_key_concepts": [],
+    }
+    with patch("generate_ideas_from_mcp.get_response_from_llm") as mock_llm:
+        mock_llm.return_value = ("x" * 200, [])
+        result = distil_s2_query(topic, MagicMock(), "ollama/qwen2.5:14b")
+    assert len(result) <= 120
+
+
+def test_distil_s2_query_llm_exception_fallback():
+    topic = {
+        "title": "Therapeutic Clowning",
+        "domain": "intervention",
+        "key_findings": [],
+        "_key_concepts": [
+            "therapeutic clowning", "humor therapy", "older adults",
+            "anxiety reduction", "wellbeing",
+        ],
+    }
+    with patch("generate_ideas_from_mcp.get_response_from_llm", side_effect=RuntimeError("LLM down")):
+        result = distil_s2_query(topic, MagicMock(), "ollama/qwen2.5:14b")
+    assert result == "therapeutic clowning humor therapy older adults anxiety reduction"
+
+
+def test_distil_s2_query_empty_key_concepts_fallback():
+    topic = {
+        "title": "Arts and Health",
+        "domain": "theory",
+        "key_findings": [],
+        "_key_concepts": [],
+    }
+    with patch("generate_ideas_from_mcp.get_response_from_llm", side_effect=Exception("error")):
+        result = distil_s2_query(topic, MagicMock(), "ollama/qwen2.5:14b")
+    assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# filter_relevant_seeds
+# ---------------------------------------------------------------------------
+
+from generate_ideas_from_mcp import filter_relevant_seeds
+
+
+def test_filter_relevant_seeds_overlap_threshold():
+    papers = [
+        {"paperId": "p1", "title": "Therapeutic clowning in aged care homes", "citationCount": 5},
+        {"paperId": "p2", "title": "Sports medicine injury prevention", "citationCount": 3},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="Therapeutic Clowning Older Adults",
+        key_concepts=["clowning", "aged care"],
+        min_overlap=2,
+    )
+    ids = [p["paperId"] for p in result]
+    assert "p1" in ids
+    assert "p2" not in ids
+
+
+def test_filter_relevant_seeds_stop_word_exclusion():
+    """Meaningful words match across stop-word-rich titles."""
+    papers = [
+        {"paperId": "p1", "title": "The art of the clown in care", "citationCount": 5},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="The Art Of Care",
+        key_concepts=["art", "care"],
+        min_overlap=2,
+    )
+    assert "p1" in [p["paperId"] for p in result]
+
+
+def test_filter_relevant_seeds_stop_words_do_not_inflate_overlap():
+    """Papers that share only stop words with the topic are rejected."""
+    papers = [
+        {"paperId": "p1", "title": "In the forest with a bear", "citationCount": 5},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="In a forest",
+        key_concepts=["the", "a", "in"],
+        min_overlap=2,
+    )
+    # After stop word removal topic_words = {"forest"}; overlap with paper title = 1 < 2
+    assert result == []
+
+
+def test_filter_relevant_seeds_hyphen_slug_splitting():
+    """Hyphen-joined concept slugs are split before matching."""
+    papers = [
+        {"paperId": "p1", "title": "Anxiety reduction techniques in therapy", "citationCount": 5},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="Therapy Outcomes",
+        key_concepts=["anxiety-reduction", "therapy-outcomes"],
+        min_overlap=2,
+    )
+    # "anxiety-reduction" → {"anxiety", "reduction"}, "therapy-outcomes" → {"therapy", "outcomes"}
+    # paper title contains "anxiety", "reduction", "therapy" → overlap 3 >= 2
+    assert "p1" in [p["paperId"] for p in result]
+
+
+def test_filter_relevant_seeds_zero_match_returns_empty():
+    papers = [
+        {"paperId": "p1", "title": "Quantum computing algorithms", "citationCount": 5},
+        {"paperId": "p2", "title": "Machine learning optimization", "citationCount": 3},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="Therapeutic Clowning Elder Care",
+        key_concepts=["clowning", "wellbeing", "older adults"],
+        min_overlap=2,
+    )
+    assert result == []

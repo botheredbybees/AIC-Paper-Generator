@@ -192,6 +192,8 @@ def parse_args() -> argparse.Namespace:
                         help="Skip LLM peer review (default: True — no figures in proposal mode)")
     parser.add_argument("--no-skip-review", dest="skip_review", action="store_false",
                         help="Enable LLM peer review")
+    parser.add_argument("--list-ideas", action="store_true",
+                        help="Print the ideas in --load_ideas with their index and title, then exit")
     return parser.parse_args()
 
 
@@ -210,6 +212,15 @@ def main() -> None:
     except json.JSONDecodeError as exc:
         print(f"Error: invalid JSON in {load_ideas}: {exc}", file=sys.stderr)
         sys.exit(1)
+
+    if args.list_ideas:
+        print(f"\n{'idx':<4}  {'name':<45}  title")
+        print("-" * 100)
+        for i, idea in enumerate(ideas):
+            name = (idea.get("Name") or "")[:44]
+            title = (idea.get("Title") or "")[:55]
+            print(f"{i:<4}  {name:<45}  {title}")
+        sys.exit(0)
 
     if not isinstance(ideas, list):
         print(f"Error: {load_ideas} must contain a JSON array, got {type(ideas).__name__}", file=sys.stderr)

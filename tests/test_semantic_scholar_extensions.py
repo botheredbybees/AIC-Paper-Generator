@@ -6,7 +6,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from unittest.mock import patch, MagicMock
 
+import requests
+
 from ai_scientist.tools.semantic_scholar import (
+    fetch_paper_by_doi,
     fetch_paper_citations,
     fetch_paper_references,
     utas_library_url,
@@ -83,6 +86,44 @@ def test_fetch_paper_citations_returns_empty_on_http_error():
                 fetch_paper_citations("bad_id")
 
 
+def _make_http_error(status_code: int) -> requests.exceptions.HTTPError:
+    resp = MagicMock()
+    resp.status_code = status_code
+    err = requests.exceptions.HTTPError(response=resp)
+    return err
+
+
+def test_not_rate_limited_returns_true_for_non_429():
+    from ai_scientist.tools.semantic_scholar import _not_rate_limited
+    assert _not_rate_limited(_make_http_error(404)) is True
+    assert _not_rate_limited(_make_http_error(500)) is True
+
+
+def test_not_rate_limited_returns_false_for_429():
+    from ai_scientist.tools.semantic_scholar import _not_rate_limited
+    assert _not_rate_limited(_make_http_error(429)) is False
+
+
+def test_fetch_paper_citations_returns_empty_when_data_is_null():
+    mock = MagicMock()
+    mock.status_code = 200
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {"data": None}
+    with patch("requests.get", return_value=mock):
+        result = fetch_paper_citations("abc123", limit=10)
+    assert result == []
+
+
+def test_fetch_paper_references_returns_empty_when_data_is_null():
+    mock = MagicMock()
+    mock.status_code = 200
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {"data": None}
+    with patch("requests.get", return_value=mock):
+        result = fetch_paper_references("abc123", limit=10)
+    assert result == []
+
+
 def test_utas_library_url_with_doi():
     url = utas_library_url(doi="10.1234/example", title=None)
     assert url == "https://ezproxy.utas.edu.au/login?url=https://doi.org/10.1234/example"
@@ -109,3 +150,61 @@ def test_utas_library_url_doi_takes_precedence_over_title():
     url = utas_library_url(doi="10.9999/test", title="Some Title")
     assert "ezproxy.utas.edu.au" in url
     assert "primo" not in url
+
+
+# ---------------------------------------------------------------------------
+# fetch_paper_by_doi
+# ---------------------------------------------------------------------------
+
+_SAMPLE_DOI_PAPER = {
+    "paperId": "doi_paper_123",
+    "title": "Dance Movement Therapy for Dementia",
+    "authors": [{"name": "Karkou, V."}, {"name": "Meekums, B."}],
+    "year": 2017,
+    "venue": "Cochrane Database of Systematic Reviews",
+    "abstract": "A Cochrane systematic review of DMT.",
+    "citationCount": 183,
+    "isOpenAccess": False,
+    "openAccessPdf": None,
+    "externalIds": {"DOI": "10.1002/14651858.CD011022.pub2"},
+}
+
+
+def test_fetch_paper_by_doi_returns_paper_dict():
+    mock_rsp = MagicMock()
+    mock_rsp.status_code = 200
+    mock_rsp.json.return_value = _SAMPLE_DOI_PAPER
+    with patch("requests.get", return_value=mock_rsp):
+        result = fetch_paper_by_doi("10.1002/14651858.CD011022.pub2")
+    assert result is not None
+    assert result["paperId"] == "doi_paper_123"
+    assert result["title"] == "Dance Movement Therapy for Dementia"
+
+
+def test_fetch_paper_by_doi_calls_s2_doi_endpoint():
+    mock_rsp = MagicMock()
+    mock_rsp.status_code = 200
+    mock_rsp.json.return_value = _SAMPLE_DOI_PAPER
+    with patch("requests.get", return_value=mock_rsp) as mock_get:
+        fetch_paper_by_doi("10.9999/mytest")
+    url = mock_get.call_args[0][0]
+    assert "DOI:10.9999/mytest" in url
+
+
+def test_fetch_paper_by_doi_returns_none_on_404():
+    mock_rsp = MagicMock()
+    mock_rsp.status_code = 404
+    with patch("requests.get", return_value=mock_rsp):
+        result = fetch_paper_by_doi("10.0000/missing")
+    assert result is None
+
+
+def test_fetch_paper_by_doi_requests_traversal_fields():
+    mock_rsp = MagicMock()
+    mock_rsp.status_code = 200
+    mock_rsp.json.return_value = _SAMPLE_DOI_PAPER
+    with patch("requests.get", return_value=mock_rsp) as mock_get:
+        fetch_paper_by_doi("10.1234/fields")
+    params = mock_get.call_args[1]["params"]
+    assert "isOpenAccess" in params["fields"]
+    assert "citationCount" in params["fields"]

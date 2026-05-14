@@ -125,11 +125,11 @@ This fork adds two scripts that generate 4-page ICBINB research proposals from t
 generate_ideas_from_mcp.py    # MCP query → S2 novelty → Ollama LLM → ideas JSON
 launch_proposal_writer.py     # ideas JSON → experiment folder → citation pre-pop → PDF
 tests/
-  test_generate_ideas_from_mcp.py   # 21 tests
+  test_generate_ideas_from_mcp.py   # 93 tests
   test_launch_proposal_writer.py    # 14 tests
   conftest.py                        # pytest-asyncio config
 pytest.ini                           # asyncio_mode = auto
-.env.example                         # OLLAMA_BASE_URL, MCP_URL, S2_API_KEY
+.env.example                         # OLLAMA_BASE_URL, MCP_URL, S2_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
 ```
 
 ### Upstream Modifications
@@ -149,8 +149,10 @@ export PATH="$HOME/bin:$PATH"   # tectonic shims live here
 
 Key `.env` values:
 - `MCP_URL=http://localhost:8765/sse` — must be `localhost`, not an IP (FastMCP host validation)
-- `OLLAMA_BASE_URL=http://192.168.1.20:11434`
+- `OLLAMA_BASE_URL=http://localhost:11434`
 - `S2_API_KEY=...` — 1 req/sec authenticated rate limit
+- `SUPABASE_URL=http://localhost:8000` — Kong proxy for PostgREST
+- `SUPABASE_ANON_KEY=eyJ...` — standard Supabase Docker anon JWT (from `supabase/apps/studio/.env`)
 
 ### LaTeX Compilation
 
@@ -193,7 +195,7 @@ Output: `experiments/<timestamp>_<name>_proposal_0/<name>_reflection1.pdf`
 pytest tests/ -v
 ```
 
-182 tests, all passing. Tests mock MCP, S2, and LLM calls — no external services needed.
+197 tests, all passing. Tests mock MCP, S2, and LLM calls — no external services needed.
 
 ### Known Issues
 
@@ -211,18 +213,20 @@ pytest tests/ -v
 
 `library.html` is generated alongside the ideas JSON whenever papers are found or ideas are produced. It has a 3-tab layout:
 
-- **Tab 1 — ⚙️ Generate ideas** — disabled placeholder (future)
+- **Tab 1 — ⚙️ Generate ideas** — command builder for `generate_ideas_from_mcp.py`: query, domain, confidence, tag type-ahead (Supabase datalist), seed DOI (onblur → sources lookup pre-fills query + tag), model (Ollama fetch), limit, max-questions, --recursive (default on), --fetch-fulltext, seed PDF, output path; live command textarea + copy button
 - **Tab 2 — 📥 Papers** — three sections: Paywalled Papers (UTAS EZproxy links + clipboard filename button), Publisher-Blocked Downloads (403 to bots; direct URL + library fallback), Auto-Downloaded Papers (checkboxes + rm command builder)
 - **Tab 3 — 🚀 Launch writer** — interactive form that builds a `launch_proposal_writer.py` command: idea selector (radio buttons), writeup type, model (fetched from Ollama API on load), cite rounds, live command textarea, copy button
 
-Tab state, last model, and last ideas path are persisted in `localStorage`. Opening any freshly-generated `library.html` updates `lastIdeasPath` automatically.
+Tab state, last model, and last ideas path are persisted in `localStorage`. Opening any freshly-generated `library.html` updates `lastIdeasPath` automatically. Tab 1 output path field also writes `lastIdeasPath`, keeping Tab 3 in sync without a page reload.
 
 ### Spec and Design Docs
 
 - `docs/superpowers/specs/2026-05-10-mcp-to-ai-scientist-design.md`
 - `docs/superpowers/specs/2026-05-14-library-html-design.md`
 - `docs/superpowers/specs/2026-05-14-library-html-tabs-design.md`
+- `docs/superpowers/specs/2026-05-14-library-html-tab1-design.md`
 - `docs/superpowers/plans/2026-05-10-mcp-to-ai-scientist.md`
 - `docs/superpowers/plans/2026-05-14-library-html.md`
 - `docs/superpowers/plans/2026-05-14-library-html-tabs.md`
+- `docs/superpowers/plans/2026-05-14-library-html-tab1.md`
 - `programmers_notes.md` — implementation internals and gotchas

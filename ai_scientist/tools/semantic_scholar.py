@@ -16,6 +16,11 @@ def on_backoff(details: Dict) -> None:
     )
 
 
+def _not_rate_limited(exc: requests.exceptions.HTTPError) -> bool:
+    """Give up immediately on errors other than 429 (rate limit)."""
+    return exc.response is not None and exc.response.status_code != 429
+
+
 class SemanticScholarSearchTool(BaseTool):
     def __init__(
         self,
@@ -100,7 +105,8 @@ Abstract: {paper.get("abstract", "No abstract available.")}"""
 
 
 @backoff.on_exception(
-    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff, max_tries=4
+    backoff.constant, requests.exceptions.HTTPError, on_backoff=on_backoff,
+    max_tries=8, giveup=_not_rate_limited, interval=1.5,
 )
 def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
     S2_API_KEY = os.getenv("S2_API_KEY")
@@ -121,7 +127,7 @@ def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
         params={
             "query": query,
             "limit": result_limit,
-            "fields": "title,authors,venue,year,abstract,citationStyles,citationCount",
+            "fields": "title,authors,venue,year,abstract,citationStyles,citationCount,externalIds",
         },
     )
     print(f"Response Status Code: {rsp.status_code}")
@@ -140,6 +146,31 @@ def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
 
 
 # ---------------------------------------------------------------------------
+# DOI lookup
+# ---------------------------------------------------------------------------
+
+
+@backoff.on_exception(
+    backoff.constant, requests.exceptions.HTTPError, on_backoff=on_backoff,
+    max_tries=8, giveup=_not_rate_limited, interval=1.5,
+)
+def fetch_paper_by_doi(doi: str) -> dict | None:
+    """Fetch a single S2 paper by DOI. Returns the paper dict or None if not found (404)."""
+    S2_API_KEY = os.getenv("S2_API_KEY")
+    headers = {"X-API-KEY": S2_API_KEY} if S2_API_KEY else {}
+    rsp = requests.get(
+        f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi.strip()}",
+        headers=headers,
+        params={"fields": _S2_TRAVERSAL_FIELDS},
+    )
+    if rsp.status_code == 404:
+        return None
+    rsp.raise_for_status()
+    time.sleep(1.0)
+    return rsp.json()
+
+
+# ---------------------------------------------------------------------------
 # Citation / reference traversal
 # ---------------------------------------------------------------------------
 
@@ -150,7 +181,8 @@ _S2_TRAVERSAL_FIELDS = (
 
 
 @backoff.on_exception(
-    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff, max_tries=4
+    backoff.constant, requests.exceptions.HTTPError, on_backoff=on_backoff,
+    max_tries=8, giveup=_not_rate_limited, interval=1.5,
 )
 def fetch_paper_citations(paper_id: str, limit: int = 50) -> list[dict]:
     """Return papers that cite paper_id (forward citations)."""
@@ -162,13 +194,14 @@ def fetch_paper_citations(paper_id: str, limit: int = 50) -> list[dict]:
         params={"limit": limit, "fields": _S2_TRAVERSAL_FIELDS},
     )
     rsp.raise_for_status()
-    data = rsp.json().get("data", [])
+    data = rsp.json().get("data") or []
     time.sleep(1.0)
     return [item.get("citingPaper", item) for item in data if item.get("citingPaper")]
 
 
 @backoff.on_exception(
-    backoff.expo, requests.exceptions.HTTPError, on_backoff=on_backoff, max_tries=4
+    backoff.constant, requests.exceptions.HTTPError, on_backoff=on_backoff,
+    max_tries=8, giveup=_not_rate_limited, interval=1.5,
 )
 def fetch_paper_references(paper_id: str, limit: int = 50) -> list[dict]:
     """Return papers cited by paper_id (backward references)."""
@@ -180,7 +213,7 @@ def fetch_paper_references(paper_id: str, limit: int = 50) -> list[dict]:
         params={"limit": limit, "fields": _S2_TRAVERSAL_FIELDS},
     )
     rsp.raise_for_status()
-    data = rsp.json().get("data", [])
+    data = rsp.json().get("data") or []
     time.sleep(1.0)
     return [item.get("citedPaper", item) for item in data if item.get("citedPaper")]
 
