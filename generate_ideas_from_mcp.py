@@ -587,7 +587,6 @@ def write_library_html(
     tab3_update_js = ""
     if ideas:
         extra_css += _LIBRARY_HTML_CSS_LAUNCH
-        import json as _json2
         idea_items = [
             {"idx": i, "name": idea.get("Name", ""), "title": idea.get("Title", "")}
             for i, idea in enumerate(ideas)
@@ -597,7 +596,7 @@ def write_library_html(
         js_constants = (
             f'const LOAD_IDEAS_PATH = "{_esc(safe_path)}";\n'
             f'const OLLAMA_BASE_URL = "{_esc(safe_ollama)}";\n'
-            f'const IDEA_LIST = {_json2.dumps(idea_items)};'
+            f'const IDEA_LIST = {_json.dumps(idea_items)};'
         )
         idea_rows = "\n".join(_idea_row(idea, i) for i, idea in enumerate(ideas))
         tab3_btn = (
