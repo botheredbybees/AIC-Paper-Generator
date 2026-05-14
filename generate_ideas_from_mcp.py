@@ -793,7 +793,7 @@ function updateRm() {{
 {js_constants}
 function showTab(tab, btn) {{
   document.querySelectorAll('.tab-panel').forEach(function(p) {{ p.classList.remove('active'); }});
-  document.querySelectorAll('.tab-btn:not(.disabled)').forEach(function(b) {{ b.classList.remove('active'); }});
+  document.querySelectorAll('.tab-btn').forEach(function(b) {{ b.classList.remove('active'); }});
   document.getElementById(tab + '-panel').classList.add('active');
   btn.classList.add('active');
   localStorage.setItem('activeTab', tab);
