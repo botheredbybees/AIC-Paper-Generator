@@ -90,6 +90,17 @@ Both are included only when the corresponding Python params are non-`None`. When
 
 ## Supabase tag fetch
 
+### Tag field — `<datalist>` with type-ahead search
+
+The database has ~3000 tags, making a plain `<select>` unusable. The tag field
+uses a `<datalist>`-backed text input instead — the browser provides native
+type-ahead filtering with zero external dependencies:
+
+```html
+<input type="text" id="gen-tag" list="gen-tag-list" placeholder="type to search…">
+<datalist id="gen-tag-list"></datalist>
+```
+
 On `DOMContentLoaded`, if `SUPABASE_URL` is defined:
 
 ```js
@@ -102,22 +113,62 @@ fetch(SUPABASE_URL + '/rest/v1/tags?select=slug&order=slug', {
 })
 .then(r => r.json())
 .then(rows => {
-  const sel = document.getElementById('gen-tag');
+  const dl = document.getElementById('gen-tag-list');
   rows.forEach(row => {
     const opt = document.createElement('option');
-    opt.value = opt.textContent = row.slug;
-    sel.appendChild(opt);
+    opt.value = row.slug;
+    dl.appendChild(opt);
   });
 })
 .catch(() => {
-  const sel = document.getElementById('gen-tag');
-  sel.disabled = true;
-  sel.options[0].textContent = 'tags unavailable';
+  document.getElementById('gen-tag').placeholder = 'tags unavailable';
+  document.getElementById('gen-tag').disabled = true;
 });
 ```
 
+The tag value is a discovery aid only (see Section 1 note). When `--tag` support
+is added to `generate_ideas_from_mcp.py` (tracked in `tasks.md`), the field will
+be wired to that flag and included in the generated command.
+
 Domain (`intervention` / `theory` / `method`) and confidence (`low` / `medium` /
 `high`) are hardcoded `<option>` elements — they are fixed enums in the CLI.
+
+### Seed DOI → source lookup → pre-populate query
+
+When the seed DOI field loses focus (`onblur`) and is non-empty, JS queries the
+`sources` table for a matching record:
+
+```js
+fetch(SUPABASE_URL + '/rest/v1/sources?doi=eq.' + encodeURIComponent(doi)
+      + '&select=key_concepts,tags', {
+  headers: {
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+    'Content-Profile': 'a1c-wiki-db'
+  }
+})
+.then(r => r.json())
+.then(rows => {
+  if (!rows.length) return;
+  const src = rows[0];
+  const concepts = (src.key_concepts || []).slice(0, 8).join(' ');
+  if (concepts && !document.getElementById('gen-query').value) {
+    document.getElementById('gen-query').value = concepts;
+    updateGenCmd();
+  }
+  const firstTag = (src.tags || [])[0];
+  if (firstTag) {
+    document.getElementById('gen-tag').value = firstTag;
+  }
+});
+```
+
+Behaviour:
+- Pre-populates query field only when it is currently empty (never overwrites
+  user input).
+- Pre-fills the tag field with the source's first tag.
+- Silently skips if no matching source is found (DOI not yet in the database).
+- No error surfaced to the user on lookup failure — it is a best-effort assist.
 
 ---
 
@@ -132,13 +183,18 @@ Three named sections rendered as labelled groups (matching the Option A layout).
 | Query text | `<input type="text" id="gen-query">` | `--query` | `""` |
 | Domain | `<select id="gen-domain">` | `--domain` | `— any —` |
 | Confidence | `<select id="gen-confidence">` | `--confidence` | `— any —` |
-| Tag | `<select id="gen-tag">` | _(not a CLI flag — used only to inform query)_ | `— any —` |
+| Tag | `<input type="text" id="gen-tag" list="gen-tag-list">` | _(discovery aid — see note)_ | `""` |
 | Seed DOI | `<input type="text" id="gen-seed-doi">` | `--seed-doi` | `""` |
 
-**Tag select note:** `generate_ideas_from_mcp.py` has no `--tag` flag — the MCP
-`search_topics` call does not filter by tag. The tag dropdown is provided as a
-discovery aid only (helps the user choose a query term). It is not included in
-the generated command.
+**Tag field note:** `generate_ideas_from_mcp.py` has no `--tag` flag yet (tracked
+in `tasks.md`). The field is a type-ahead search input backed by `<datalist>` (see
+Supabase tag fetch section). It is not included in the generated command until
+`--tag` support is added to the CLI. Its primary value now is helping the user
+pick a focused query term and triggering the seed DOI lookup's tag pre-fill.
+
+**Seed DOI auto-populate:** on blur, if the DOI matches a record in the `sources`
+table, `key_concepts` pre-fills the query field (when empty) and the first tag
+pre-fills the tag input. See the Supabase section for the full lookup behaviour.
 
 ### Section 2 — ⚙️ Run settings
 
@@ -248,7 +304,8 @@ Written in `tests/test_generate_ideas_from_mcp.py` before implementation.
 | `test_write_library_html_tab1_panel_present` | `tab1-panel` in content |
 | `test_write_library_html_generate_cmd_textarea` | `generate-cmd` in content |
 | `test_write_library_html_supabase_constants_embedded` | `SUPABASE_URL` and `SUPABASE_ANON_KEY` in content when both params given |
-| `test_write_library_html_supabase_tag_fetch_js` | tag fetch JS (`gen-tag`) present when `supabase_url` given |
+| `test_write_library_html_supabase_tag_fetch_js` | `gen-tag-list` datalist populated by fetch JS when `supabase_url` given |
+| `test_write_library_html_seed_doi_lookup_js` | source lookup JS (`sources?doi=eq.`) present when `supabase_url` given |
 | `test_write_library_html_domain_options` | `intervention`, `theory`, `method` in tab1 content |
 | `test_write_library_html_confidence_options` | `low`, `medium`, `high` in tab1 content |
 | `test_write_library_html_query_field_present` | `gen-query` in content |
@@ -258,7 +315,7 @@ Written in `tests/test_generate_ideas_from_mcp.py` before implementation.
 | `test_write_library_html_model_select_in_tab1` | `model-select-gen` in content |
 | `test_write_library_html_tab1_copy_btn` | copy button adjacent to `generate-cmd` |
 
-Total after this phase: 182 + 13 = 195 tests.
+Total after this phase: 182 + 14 = 196 tests.
 
 ---
 
