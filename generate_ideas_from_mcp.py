@@ -595,6 +595,7 @@ def write_library_html(
   }"""
     tab3_init_js = ""
     tab3_update_js = ""
+    tab1_update_js = ""
     if ideas:
         idea_items = [
             {"idx": i, "name": idea.get("Name", ""), "title": idea.get("Title", "")}
@@ -846,11 +847,65 @@ function copyCmd(btn) {
       updateGenCmd();
     });"""
 
+    tab1_cmd_html = """<div class="field" style="margin-top:8px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <label>Generated command</label>
+    <button class="btn-copy" onclick="copyGenCmd(this)">&#x1F4CB; Copy command</button>
+  </div>
+  <textarea id="generate-cmd" class="launch-cmd" readonly rows="8"></textarea>
+</div>"""
+
     tab1_panel = f"""<h2>&#9881;&#65039; Generate Ideas</h2>
 <p class="intro">Configure the run, then copy the command to your terminal.</p>
 {tab1_section1}
 {tab1_section2}
-{tab1_section3}"""
+{tab1_section3}
+{tab1_cmd_html}"""
+
+    tab1_update_js = r"""
+function updateGenCmd() {
+  var query = (document.getElementById('gen-query') || {}).value || '';
+  var domain = (document.getElementById('gen-domain') || {}).value || '';
+  var confidence = (document.getElementById('gen-confidence') || {}).value || '';
+  var modelEl = document.getElementById('model-select-gen');
+  var model = modelEl ? (modelEl.value || 'ollama/qwen2.5:14b') : 'ollama/qwen2.5:14b';
+  var limit = (document.getElementById('gen-limit') || {}).value || '10';
+  var maxQ = (document.getElementById('gen-max-q') || {}).value || '3';
+  var recursive = document.getElementById('gen-recursive') && document.getElementById('gen-recursive').checked;
+  var fetchFull = document.getElementById('gen-fetch-fulltext') && document.getElementById('gen-fetch-fulltext').checked;
+  var seedDoi = (document.getElementById('gen-seed-doi') || {}).value || '';
+  var seedPdf = (document.getElementById('gen-seed-pdf') || {}).value || '';
+  var output = (document.getElementById('gen-output') || {}).value || 'ai_scientist/ideas/mcp_generated.json';
+
+  var cmd = 'python generate_ideas_from_mcp.py';
+  if (!query && !seedDoi && !seedPdf) {
+    cmd = '# WARNING: provide --query, --seed-doi, or --seed-pdf\n' + cmd;
+  }
+  if (query) cmd += ' \\\n  --query "' + query.replace(/"/g, '\\"') + '"';
+  if (domain) cmd += ' \\\n  --domain ' + domain;
+  if (confidence) cmd += ' \\\n  --confidence ' + confidence;
+  cmd += ' \\\n  --model ' + model;
+  cmd += ' \\\n  --limit ' + limit;
+  cmd += ' \\\n  --max-questions ' + maxQ;
+  if (recursive) cmd += ' \\\n  --recursive';
+  if (fetchFull) cmd += ' \\\n  --fetch-fulltext';
+  if (seedDoi) cmd += ' \\\n  --seed-doi ' + seedDoi;
+  if (seedPdf) cmd += ' \\\n  --seed-pdf ' + seedPdf;
+  cmd += ' \\\n  --output ' + output;
+
+  var ta = document.getElementById('generate-cmd');
+  if (ta) ta.value = cmd;
+  localStorage.setItem('lastModel', model);
+}
+function copyGenCmd(btn) {
+  var ta = document.getElementById('generate-cmd');
+  if (!ta) return;
+  navigator.clipboard.writeText(ta.value).then(function() {
+    var orig = btn.textContent;
+    btn.textContent = '✓ Copied'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = orig; btn.classList.remove('copied'); }, 2000);
+  });
+}"""
 
     if blocked_oa:
         extra_css += _LIBRARY_HTML_CSS_BLOCKED
@@ -956,6 +1011,7 @@ document.addEventListener('DOMContentLoaded', function() {{
 {tab1_tag_fetch_js}
 {tab1_model_fetch_js}
 {tab3_init_js}
+  updateGenCmd();
 }});
 function copyFilename(btn) {{
   navigator.clipboard.writeText(btn.dataset.filename).then(function() {{
@@ -966,6 +1022,7 @@ function copyFilename(btn) {{
   }});
 }}
 {tab3_update_js}
+{tab1_update_js}
 </script>
 </body>
 </html>"""

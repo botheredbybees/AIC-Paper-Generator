@@ -483,6 +483,21 @@ def test_write_library_html_tab1_localstorage_lastpath(tmp_path):
     assert "gen-output" in content
 
 
+def test_write_library_html_generate_cmd_textarea(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    assert 'id="generate-cmd"' in out.read_text()
+
+
+def test_write_library_html_tab1_copy_btn(tmp_path):
+    out = tmp_path / "library.html"
+    write_library_html([], str(out))
+    content = out.read_text()
+    # Copy button must appear near the generate-cmd textarea
+    assert "generate-cmd" in content
+    assert "copyGenCmd" in content
+
+
 from generate_ideas_from_mcp import fetch_mcp_topics, filter_topics_with_questions
 
 
