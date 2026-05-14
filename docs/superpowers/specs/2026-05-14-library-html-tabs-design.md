@@ -95,9 +95,25 @@ const IDEA_LIST = [
 
 `IDEA_LIST` is built from `ideas` by extracting `idx` (position in list), `idea["Name"]`, and `idea["Title"]`. Private keys (`_mcp_topic`, `_s2_papers`, etc.) are not embedded.
 
+### Path persistence via localStorage
+
+On every `DOMContentLoaded`, the page writes:
+
+```js
+localStorage.setItem('lastIdeasPath', LOAD_IDEAS_PATH);
+```
+
+This means opening any freshly-generated `library.html` automatically updates the stored path. Tab 3 initialises the `--load_ideas` field with `localStorage.getItem('lastIdeasPath') || LOAD_IDEAS_PATH` — the most-recently-opened page's path wins.
+
+When Tab 1 is eventually built, it will call `localStorage.setItem('lastIdeasPath', <output-path>)` after generating a new ideas JSON — same mechanism, no new infrastructure needed.
+
 ---
 
 ## Tab 3 — Launch Writer Form
+
+### Ideas path field
+
+An editable `<input type="text" id="ideas-path">` pre-filled with `localStorage.getItem('lastIdeasPath') || LOAD_IDEAS_PATH`. Any change updates the command textarea live and writes the new value to `localStorage.setItem('lastIdeasPath', value)`. Labelled "Ideas JSON path" with a note "pre-filled from last generated run".
 
 ### Idea selector
 
@@ -193,8 +209,10 @@ New CSS classes added to `_LIBRARY_HTML_CSS` (always included — tabs always re
 | `test_write_library_html_no_ideas_omits_launch_tab` | no `launch-cmd` when ideas=None |
 | `test_write_library_html_generated_when_only_ideas` | file created when only ideas given (no papers) |
 | `test_write_library_html_localStorage_script_present` | `localStorage` and `activeTab` in content |
+| `test_write_library_html_ideas_path_field_editable` | `ideas-path` input field present in Tab 3 |
+| `test_write_library_html_lastIdeasPath_written_on_load` | `lastIdeasPath` appears in JS on-load block |
 
-Total after this phase: 169 + 12 = 181 tests.
+Total after this phase: 169 + 14 = 183 tests.
 
 ---
 
