@@ -111,9 +111,9 @@ When Tab 1 is eventually built, it will call `localStorage.setItem('lastIdeasPat
 
 ## Tab 3 — Launch Writer Form
 
-### Ideas path field
+### Ideas path (read-only)
 
-An editable `<input type="text" id="ideas-path">` pre-filled with `localStorage.getItem('lastIdeasPath') || LOAD_IDEAS_PATH`. Any change updates the command textarea live and writes the new value to `localStorage.setItem('lastIdeasPath', value)`. Labelled "Ideas JSON path" with a note "pre-filled from last generated run".
+The `--load_ideas` value used in the command is `localStorage.getItem('lastIdeasPath') || LOAD_IDEAS_PATH`. It is **not** shown as an editable field — editing it would make the path disagree with `IDEA_LIST` (which is baked in at generation time and always matches `LOAD_IDEAS_PATH`). The path is visible only inside the generated command textarea. When Tab 1 is built, it updates `lastIdeasPath` in localStorage after generating a new JSON, and the newly written `library.html` carries a fresh `IDEA_LIST` — opening that page keeps path and radio buttons in sync.
 
 ### Idea selector
 
@@ -209,10 +209,9 @@ New CSS classes added to `_LIBRARY_HTML_CSS` (always included — tabs always re
 | `test_write_library_html_no_ideas_omits_launch_tab` | no `launch-cmd` when ideas=None |
 | `test_write_library_html_generated_when_only_ideas` | file created when only ideas given (no papers) |
 | `test_write_library_html_localStorage_script_present` | `localStorage` and `activeTab` in content |
-| `test_write_library_html_ideas_path_field_editable` | `ideas-path` input field present in Tab 3 |
 | `test_write_library_html_lastIdeasPath_written_on_load` | `lastIdeasPath` appears in JS on-load block |
 
-Total after this phase: 169 + 14 = 183 tests.
+Total after this phase: 169 + 13 = 182 tests.
 
 ---
 
