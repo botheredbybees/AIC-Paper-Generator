@@ -445,7 +445,26 @@ button.btn-copy.copied{background:#e8f5e9;border-color:#2e7d32;color:#2e7d32}
 .dl-paper-title{font-size:16px;font-weight:500;line-height:1.4}
 .dl-paper-meta{color:#888;font-size:13px;margin-top:3px}
 .dl-paper.selected .dl-paper-title{color:#b71c1c;text-decoration:line-through}
+.tab-bar{display:flex;border-bottom:2px solid #e0e0e0;margin-bottom:28px}
+.tab-btn{padding:10px 20px;border:none;background:none;cursor:pointer;font-size:15px;color:#555;border-bottom:3px solid transparent;margin-bottom:-2px}
+.tab-btn.active{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:600}
+.tab-btn.disabled{color:#bbb;cursor:default;pointer-events:none}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.soon-badge{font-size:11px;background:#f0f0f0;color:#999;padding:2px 6px;border-radius:8px;margin-left:6px;vertical-align:middle}
 """
+_LIBRARY_HTML_CSS_LAUNCH = (
+    ".idea-row{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #efefef;cursor:pointer}"
+    ".idea-row:last-child{border-bottom:none}"
+    ".idea-title{font-size:17px;font-weight:600;line-height:1.4}"
+    ".idea-slug{font-size:13px;color:#888;margin-top:3px}"
+    ".form-row{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px}"
+    ".field{display:flex;flex-direction:column;gap:6px}"
+    ".field label{font-size:14px;color:#555;font-weight:500}"
+    ".field select,.field input[type=number]{font-size:15px;padding:6px 10px;border:1px solid #ccc;border-radius:5px;min-width:180px}"
+    ".field-help{font-weight:400;color:#888}"
+    'textarea.launch-cmd{width:100%;font-family:"SFMono-Regular",Consolas,monospace;font-size:13px;color:#ce9178;background:#1e1e1e;border:1px solid #444;border-radius:5px;padding:10px;resize:vertical;box-sizing:border-box}'
+)
 _LIBRARY_HTML_CSS_BLOCKED = (
     "a.btn-direct{color:#2e7d32;font-size:14px;text-decoration:none;"
     "border:1px solid #2e7d32;padding:5px 14px;border-radius:5px}"
@@ -468,6 +487,9 @@ def write_library_html(
     blocked_oa: list[dict] | None = None,
     downloaded: list[tuple[dict, str]] | None = None,
     pdfs_dir: "Path | None" = None,
+    ideas: list[dict] | None = None,
+    ideas_path: str | None = None,
+    ollama_base_url: str | None = None,
 ) -> None:
     """Write a standalone interactive HTML library download page."""
     import json as _json
@@ -536,6 +558,19 @@ def write_library_html(
             f'</div></div>'
         )
 
+    def _idea_row(idea: dict, idx: int) -> str:
+        title = _esc(idea.get("Title") or "Untitled")
+        name = _esc(idea.get("Name") or "")
+        checked = " checked" if idx == 0 else ""
+        return (
+            f'<label class="idea-row">'
+            f'<input type="radio" name="idea" value="{idx}"{checked} onchange="updateCmd()">'
+            f'<div class="idea-text">'
+            f'<div class="idea-title">{title}</div>'
+            f'<div class="idea-slug">{name} &middot; idx {idx}</div>'
+            f'</div></label>'
+        )
+
     n_pw = len(paywalled)
     n_bl = len(blocked_oa or [])
     n_dl = len(downloaded or [])
@@ -543,6 +578,122 @@ def write_library_html(
     stem = Path(output_path).stem
 
     extra_css = ""
+    js_constants = ""
+    tab3_btn = ""
+    tab3_panel = ""
+    localstorage_lastpath = ""
+    tab3_restore_js = ""
+    tab3_init_js = ""
+    tab3_update_js = ""
+    if ideas:
+        extra_css += _LIBRARY_HTML_CSS_LAUNCH
+        import json as _json2
+        idea_items = [
+            {"idx": i, "name": idea.get("Name", ""), "title": idea.get("Title", "")}
+            for i, idea in enumerate(ideas)
+        ]
+        safe_path = (ideas_path or "").replace("\\", "/")
+        safe_ollama = (ollama_base_url or "http://localhost:11434").replace("\\", "/")
+        js_constants = (
+            f'const LOAD_IDEAS_PATH = "{_esc(safe_path)}";\n'
+            f'const OLLAMA_BASE_URL = "{_esc(safe_ollama)}";\n'
+            f'const IDEA_LIST = {_json2.dumps(idea_items)};'
+        )
+        idea_rows = "\n".join(_idea_row(idea, i) for i, idea in enumerate(ideas))
+        tab3_btn = (
+            '<button class="tab-btn" id="tab3-btn"'
+            " onclick=\"showTab('tab3', this)\">&#x1F680; Launch writer</button>"
+        )
+        tab3_panel = f"""<div id="tab3-panel" class="tab-panel">
+<h2>&#x1F680; Launch Proposal Writer</h2>
+<p class="intro">Select an idea and configure the run, then copy the command to your terminal.</p>
+<div id="idea-list">
+{idea_rows}
+</div>
+<div class="form-row" style="margin-top:20px">
+  <div class="field">
+    <label>Writeup type</label>
+    <select id="writeup-type" onchange="updateCmd()">
+      <option value="icbinb" selected>icbinb &mdash; 4-page proposal</option>
+      <option value="review">review &mdash; APA 7 lit review</option>
+      <option value="normal">normal &mdash; 8-page ICML</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Model <span class="field-help">Sets --model_writeup and --model_citation</span></label>
+    <select id="model-select" onchange="updateCmd()"></select>
+  </div>
+  <div class="field">
+    <label>Cite rounds <span class="field-help">(optional)</span></label>
+    <input type="number" id="cite-rounds" value="10" min="1" oninput="updateCmd()">
+  </div>
+</div>
+<div class="field" style="margin-top:4px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <label>Generated command</label>
+    <button class="btn-copy" onclick="copyCmd(this)">&#x1F4CB; Copy command</button>
+  </div>
+  <textarea id="launch-cmd" class="launch-cmd" readonly rows="7"></textarea>
+</div>
+</div>"""
+        localstorage_lastpath = "localStorage.setItem('lastIdeasPath', LOAD_IDEAS_PATH);"
+        tab3_restore_js = """  var lastTab = localStorage.getItem('activeTab') || 'tab2';
+  if (lastTab === 'tab3' && document.getElementById('tab3-panel')) {
+    document.getElementById('tab2-btn').classList.remove('active');
+    document.getElementById('tab3-btn').classList.add('active');
+    document.getElementById('tab2-panel').classList.remove('active');
+    document.getElementById('tab3-panel').classList.add('active');
+  }"""
+        tab3_init_js = """  var lastModel = localStorage.getItem('lastModel');
+  fetch(OLLAMA_BASE_URL + '/api/tags')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var sel = document.getElementById('model-select');
+      (data.models || []).forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = 'ollama/' + m.name; opt.textContent = 'ollama/' + m.name;
+        sel.appendChild(opt);
+      });
+      if (lastModel && sel.querySelector('option[value="' + lastModel + '"]')) sel.value = lastModel;
+      updateCmd();
+    })
+    .catch(function() {
+      var sel = document.getElementById('model-select');
+      var inp = document.createElement('input');
+      inp.type = 'text'; inp.id = 'model-select';
+      inp.value = localStorage.getItem('lastModel') || 'ollama/qwen2.5:14b';
+      inp.addEventListener('input', updateCmd);
+      sel.parentNode.replaceChild(inp, sel);
+      updateCmd();
+    });"""
+        tab3_update_js = r"""
+function updateCmd() {
+  var radios = document.getElementsByName('idea');
+  var idx = '0';
+  for (var i = 0; i < radios.length; i++) { if (radios[i].checked) { idx = radios[i].value; break; } }
+  var writeupType = document.getElementById('writeup-type').value;
+  var modelEl = document.getElementById('model-select');
+  var model = modelEl.value || 'ollama/qwen2.5:14b';
+  var citeRounds = document.getElementById('cite-rounds').value || '10';
+  var path = localStorage.getItem('lastIdeasPath') || LOAD_IDEAS_PATH;
+  document.getElementById('launch-cmd').value =
+    'python launch_proposal_writer.py \\\n' +
+    '  --load_ideas ' + path + ' \\\n' +
+    '  --idea_idx ' + idx + ' \\\n' +
+    '  --writeup-type ' + writeupType + ' \\\n' +
+    '  --model_writeup ' + model + ' \\\n' +
+    '  --model_citation ' + model + ' \\\n' +
+    '  --num_cite_rounds ' + citeRounds;
+  localStorage.setItem('lastModel', model);
+}
+function copyCmd(btn) {
+  navigator.clipboard.writeText(document.getElementById('launch-cmd').value).then(function() {
+    var orig = btn.textContent;
+    btn.textContent = '✓ Copied'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = orig; btn.classList.remove('copied'); }, 2000);
+  });
+}"""
+
     if blocked_oa:
         extra_css += _LIBRARY_HTML_CSS_BLOCKED
     if downloaded:
@@ -603,6 +754,12 @@ function updateRm() {{
 }}
 </script>"""
 
+    tab2_content = (
+        f'<h2>&#x1F4E5; Papers to Fetch Manually</h2>\n'
+        f'{fetch_html}'
+        f'{dl_html}'
+    )
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -614,18 +771,38 @@ function updateRm() {{
 <body>
 <h1>&#x1F4DA; Library download list</h1>
 <div class="meta">Generated {today} &middot; {stem} &middot; {n_pw + n_bl} to fetch, {n_dl} auto-downloaded</div>
-<h2>&#x1F4E5; Papers to Fetch Manually</h2>
-{fetch_html}
-{dl_html}
+<div class="tab-bar">
+  <button class="tab-btn disabled" tabindex="-1">&#9881;&#65039; Generate ideas <span class="soon-badge">soon</span></button>
+  <button class="tab-btn active" id="tab2-btn" onclick="showTab('tab2', this)">&#x1F4E5; Papers</button>
+  {tab3_btn}
+</div>
+<div id="tab2-panel" class="tab-panel active">
+{tab2_content}
+</div>
+{tab3_panel}
 <script>
+{js_constants}
+function showTab(tab, btn) {{
+  document.querySelectorAll('.tab-panel').forEach(function(p) {{ p.classList.remove('active'); }});
+  document.querySelectorAll('.tab-btn:not(.disabled)').forEach(function(b) {{ b.classList.remove('active'); }});
+  document.getElementById(tab + '-panel').classList.add('active');
+  btn.classList.add('active');
+  localStorage.setItem('activeTab', tab);
+}}
+document.addEventListener('DOMContentLoaded', function() {{
+  {localstorage_lastpath}
+{tab3_restore_js}
+{tab3_init_js}
+}});
 function copyFilename(btn) {{
   navigator.clipboard.writeText(btn.dataset.filename).then(function() {{
     var orig = btn.textContent;
-    btn.textContent = '✓ Copied';
+    btn.textContent = '&#x2713; Copied';
     btn.classList.add('copied');
     setTimeout(function() {{ btn.textContent = orig; btn.classList.remove('copied'); }}, 2000);
   }});
 }}
+{tab3_update_js}
 </script>
 </body>
 </html>"""
