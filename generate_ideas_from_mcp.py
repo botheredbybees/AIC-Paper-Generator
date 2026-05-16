@@ -185,6 +185,45 @@ async def fetch_mcp_topics(
             return full_topics
 
 
+async def fetch_topic_by_slug(slug: str, mcp_url: str) -> list[dict]:
+    """Fetch a single wiki topic by slug directly from the MCP server.
+
+    Returns a one-element list in the same format as fetch_mcp_topics, or []
+    if the slug is not found or returns invalid JSON.
+    """
+    print(f"[MCP] Connecting to {mcp_url}")
+    async with sse_client(mcp_url) as (read, write):
+        async with ClientSession(read, write) as session:
+            print("[MCP] Session initialising...")
+            await session.initialize()
+            print("[MCP] Session ready")
+
+            print(f"[MCP] Calling get_topic: slug={slug!r}")
+            get_result = await session.call_tool("get_topic", arguments={"slug": slug})
+
+            if not get_result.content:
+                print(f"[MCP] WARNING: get_topic returned empty content for slug={slug!r}")
+                return []
+
+            try:
+                full_topic = json.loads(get_result.content[0].text)
+            except json.JSONDecodeError as exc:
+                print(f"[MCP] WARNING: invalid JSON from get_topic for slug={slug!r}: {exc}")
+                return []
+
+            source_slugs = full_topic.get("sources") or []
+            if source_slugs:
+                print(f"[MCP]   Fetching key_concepts from {len(source_slugs)} source(s)")
+                full_topic["_key_concepts"] = await fetch_source_key_concepts(
+                    source_slugs, session
+                )
+            else:
+                full_topic["_key_concepts"] = []
+
+            print(f"[MCP] Got topic {slug!r}: {full_topic.get('title')!r}")
+            return [full_topic]
+
+
 # ---------------------------------------------------------------------------
 # LLM idea translation
 # ---------------------------------------------------------------------------
@@ -1266,6 +1305,13 @@ def build_arg_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
     parser.add_argument("--query", default=None,
                         help="Semantic search query, e.g. 'elder clowning wellbeing'. "
                              "Optional when --seed-doi or --seed-pdf is provided.")
+    parser.add_argument(
+        "--topic",
+        default=None,
+        metavar="SLUG",
+        help="Fetch a specific wiki topic by slug and seed from its linked DOIs. "
+             "Can be combined with --query; topics from both are merged.",
+    )
     parser.add_argument("--seed-doi", default=None, dest="seed_doi",
                         help="DOI to seed S2 traversal from (e.g. '10.1002/14651858.CD011022.pub2')")
     parser.add_argument("--seed-pdf", default=None, dest="seed_pdf",
@@ -1316,8 +1362,8 @@ def parse_args(args=None) -> argparse.Namespace:
 
 async def _main(args: argparse.Namespace) -> None:
     # Validate: need at least one of --query, --seed-doi, --seed-pdf
-    if not args.query and not args.seed_doi and not args.seed_pdf:
-        print("ERROR: provide at least one of --query, --seed-doi, or --seed-pdf")
+    if not args.query and not args.seed_doi and not args.seed_pdf and not args.topic:
+        print("ERROR: provide at least one of --query, --topic, --seed-doi, or --seed-pdf")
         return
 
     # Resolve DOI seed papers early (before MCP, so they can be unioned)
@@ -1349,17 +1395,29 @@ async def _main(args: argparse.Namespace) -> None:
         else:
             print(f"[SEED-PDF] WARNING: no DOI found in {args.seed_pdf!r}")
 
-    print(f"\n[STAGE 1/4] MCP topic search")
+    print(f"\n[STAGE 1/4] MCP topic fetch")
+    topics: list[dict] = []
+
+    if args.topic:
+        print(f"  --topic={args.topic!r} (direct slug lookup)")
+        slug_topics = await fetch_topic_by_slug(args.topic, args.mcp_url)
+        topics.extend(slug_topics)
+        print(f"[STAGE 1/4] --topic: {len(slug_topics)} topic(s) fetched")
+
     if args.query:
-        print(f"  query={args.query!r} confidence={args.confidence} "
-              f"domain={args.domain} limit={args.limit} mcp_url={args.mcp_url}")
-        topics = await fetch_mcp_topics(
+        print(f"  --query={args.query!r} confidence={args.confidence} "
+              f"domain={args.domain} limit={args.limit}")
+        query_topics = await fetch_mcp_topics(
             args.query, args.domain, args.confidence, args.limit, args.mcp_url
         )
-        print(f"[STAGE 1/4] Done — {len(topics)} topic(s) with open questions")
-    else:
-        # No --query: synthesize a topic from the seed papers
-        topics = []
+        # Merge, deduplicating by slug (--topic takes precedence if same slug)
+        existing_slugs = {t["slug"] for t in topics}
+        new_from_query = [t for t in query_topics if t["slug"] not in existing_slugs]
+        topics.extend(new_from_query)
+        print(f"[STAGE 1/4] --query: {len(new_from_query)} additional topic(s)")
+
+    if not args.topic and not args.query:
+        # No MCP source: synthesise topic from seed paper if available
         if doi_seed_papers:
             seed = doi_seed_papers[0]
             synthetic_topic = {
@@ -1377,15 +1435,17 @@ async def _main(args: argparse.Namespace) -> None:
                 "_key_concepts": [],
             }
             topics = [synthetic_topic]
-            print(f"[STAGE 1/4] No --query; synthesised topic from seed paper: "
+            print(f"[STAGE 1/4] No --query/--topic; synthesised topic from seed paper: "
                   f"{seed.get('title')!r}")
 
+    print(f"[STAGE 1/4] Done — {len(topics)} topic(s) total")
+
     if not topics:
-        print("No topics found. Try broadening --query, removing --confidence, or increasing --limit.")
+        print("No topics found. Try --topic <slug>, --query <text>, or --seed-doi <doi>.")
         return
 
     # Augment seed pool with DOIs from the wiki DB for each fetched topic
-    if topics and not args.no_db_seeds and args.query:
+    if topics and not args.no_db_seeds and (args.query or args.topic):
         db_papers = fetch_db_dois_for_topics(topics)
         existing_pids = {p.get("paperId") for p in doi_seed_papers}
         new_from_db = [p for p in db_papers if p.get("paperId") not in existing_pids]

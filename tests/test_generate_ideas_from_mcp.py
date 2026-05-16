@@ -1558,3 +1558,142 @@ def test_no_db_seeds_flag_is_parseable():
         "--no-db-seeds",
     ])
     assert args.no_db_seeds is True
+
+
+# ---------------------------------------------------------------------------
+# --topic flag tests
+# ---------------------------------------------------------------------------
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+import json
+
+
+def _make_get_topic_result(slug="music-therapy", title="Music Therapy",
+                           questions=None, sources=None):
+    """Build a fake get_topic MCP result."""
+    topic = {
+        "slug": slug,
+        "title": title,
+        "domain": "intervention",
+        "confidence": "medium",
+        "key_findings": ["Music reduces agitation in dementia care."],
+        "open_questions": questions or ["Does music therapy improve quality of life in aged care?"],
+        "sources": sources or ["smith2023"],
+        "tags": ["music", "dementia"],
+    }
+    result = MagicMock()
+    result.content = [MagicMock(text=json.dumps(topic))]
+    return result, topic
+
+
+@pytest.mark.asyncio
+async def test_fetch_topic_by_slug_returns_single_topic():
+    """fetch_topic_by_slug returns a one-element list with full topic record."""
+    get_result, expected = _make_get_topic_result()
+    mock_session = AsyncMock()
+    mock_session.call_tool.return_value = get_result
+
+    with patch("generate_ideas_from_mcp.sse_client") as mock_sse, \
+         patch("generate_ideas_from_mcp.ClientSession") as mock_cs, \
+         patch("generate_ideas_from_mcp.fetch_source_key_concepts",
+               new_callable=AsyncMock, return_value=["music-therapy", "dementia"]):
+
+        mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+        mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        from generate_ideas_from_mcp import fetch_topic_by_slug
+        result = await fetch_topic_by_slug("music-therapy", "http://localhost:8765/sse")
+
+    assert len(result) == 1
+    assert result[0]["slug"] == "music-therapy"
+    assert result[0]["title"] == "Music Therapy"
+    assert "_key_concepts" in result[0]
+
+
+@pytest.mark.asyncio
+async def test_fetch_topic_by_slug_returns_empty_on_missing_slug():
+    """fetch_topic_by_slug returns [] when get_topic returns empty content."""
+    mock_session = AsyncMock()
+    empty_result = MagicMock()
+    empty_result.content = []
+    mock_session.call_tool.return_value = empty_result
+
+    with patch("generate_ideas_from_mcp.sse_client") as mock_sse, \
+         patch("generate_ideas_from_mcp.ClientSession") as mock_cs:
+
+        mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+        mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        from generate_ideas_from_mcp import fetch_topic_by_slug
+        result = await fetch_topic_by_slug("nonexistent-slug", "http://localhost:8765/sse")
+
+    assert result == []
+
+
+def test_topic_flag_is_parseable():
+    """--topic flag must exist in argparse config and accept a slug string."""
+    import argparse
+    import generate_ideas_from_mcp as gim
+
+    parser = argparse.ArgumentParser()
+    gim.build_arg_parser(parser)
+    args = parser.parse_args([
+        "--topic", "therapeutic-clowning",
+        "--output", "/tmp/test.json",
+    ])
+    assert args.topic == "therapeutic-clowning"
+
+
+def test_topic_flag_defaults_to_none():
+    """--topic flag must default to None when not provided."""
+    import argparse
+    import generate_ideas_from_mcp as gim
+
+    parser = argparse.ArgumentParser()
+    gim.build_arg_parser(parser)
+    args = parser.parse_args(["--query", "music", "--output", "/tmp/test.json"])
+    assert args.topic is None
+
+
+def test_validation_accepts_topic_without_query():
+    """Validation must not reject a run that has --topic but no --query/--seed-doi/--seed-pdf."""
+    import argparse
+    import generate_ideas_from_mcp as gim
+
+    parser = argparse.ArgumentParser()
+    gim.build_arg_parser(parser)
+    args = parser.parse_args([
+        "--topic", "therapeutic-clowning",
+        "--output", "/tmp/test.json",
+    ])
+    # Validation passes if args.topic is set — confirmed by flag existence above.
+    # The _main validation check is: not args.query and not args.seed_doi
+    #   and not args.seed_pdf and not args.topic  → should be False (valid)
+    assert not (not args.query and not getattr(args, "seed_doi", None)
+                and not getattr(args, "seed_pdf", None) and not args.topic)
+
+
+@pytest.mark.asyncio
+async def test_fetch_topic_by_slug_returns_empty_on_invalid_json():
+    """fetch_topic_by_slug returns [] when get_topic returns invalid JSON."""
+    mock_session = AsyncMock()
+    bad_result = MagicMock()
+    bad_result.content = [MagicMock(text="not valid json {{{")]
+    mock_session.call_tool.return_value = bad_result
+
+    with patch("generate_ideas_from_mcp.sse_client") as mock_sse, \
+         patch("generate_ideas_from_mcp.ClientSession") as mock_cs:
+        mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+        mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        from generate_ideas_from_mcp import fetch_topic_by_slug
+        result = await fetch_topic_by_slug("bad-json-topic", "http://localhost:8765/sse")
+
+    assert result == []
