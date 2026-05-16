@@ -1195,13 +1195,72 @@ def extract_seed_pdf_sections(pdf_path: str, paper: dict) -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# DB DOI seeding
+# ---------------------------------------------------------------------------
+
+def fetch_db_dois_for_topics(topics: list[dict]) -> list[dict]:
+    """Query the wiki pgvector DB for source DOIs linked to each topic slug."""
+    import psycopg2
+    from dotenv import load_dotenv
+
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(env_path, override=False)
+
+    host = os.environ.get("POSTGRES_HOST", "192.168.1.20")
+    port = int(os.environ.get("POSTGRES_PORT", "5433"))
+    dbname = os.environ.get("POSTGRES_DB", "postgres")
+    user = os.environ.get("POSTGRES_USER", "postgres")
+    password = os.environ.get("POSTGRES_PASSWORD", "")
+
+    if not password:
+        print("[DB-SEEDS] WARNING: POSTGRES_PASSWORD not set — skipping DB DOI seeding")
+        return []
+
+    slug_set = {t["slug"] for t in topics if t.get("slug")}
+    if not slug_set:
+        return []
+
+    try:
+        conn = psycopg2.connect(
+            host=host, port=port, dbname=dbname, user=user, password=password
+        )
+    except Exception as exc:
+        print(f"[DB-SEEDS] WARNING: cannot connect to DB ({exc}) — skipping")
+        return []
+
+    papers: list[dict] = []
+    with conn.cursor() as cur:
+        for slug in sorted(slug_set):
+            cur.execute(
+                'SELECT s.doi FROM "a1c-wiki-db".topic_sources ts '
+                'JOIN "a1c-wiki-db".sources s ON ts.source_slug = s.source_slug '
+                'WHERE ts.topic_slug = %s AND s.doi IS NOT NULL AND s.doi != %s',
+                (slug, ''),
+            )
+            for (doi,) in cur.fetchall():
+                paper = fetch_paper_by_doi(doi)
+                if paper and paper.get("paperId"):
+                    papers.append(paper)
+                    print(f"[DB-SEEDS]  DOI {doi!r} → {paper.get('title')!r}")
+    conn.close()
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for p in papers:
+        pid = p.get("paperId")
+        if pid and pid not in seen:
+            seen.add(pid)
+            unique.append(p)
+    print(f"[DB-SEEDS] {len(unique)} unique paper(s) fetched from wiki DB DOIs")
+    return unique
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
-def parse_args(args=None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate AI Scientist ideas from the a1c-knowledge MCP server"
-    )
+def build_arg_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """Add all CLI arguments to parser and return it."""
     parser.add_argument("--query", default=None,
                         help="Semantic search query, e.g. 'elder clowning wellbeing'. "
                              "Optional when --seed-doi or --seed-pdf is provided.")
@@ -1240,6 +1299,16 @@ def parse_args(args=None) -> argparse.Namespace:
                         help="Download and extract Discussion/Results from OA PDFs (requires --recursive)")
     parser.add_argument("--library-list", default=None, dest="library_list",
                         help="Path to write a Markdown paper shopping list (paywalled + blocked)")
+    parser.add_argument("--no-db-seeds", action="store_true", default=False,
+                        help="Skip automatic DOI seeding from the wiki pgvector DB.")
+    return parser
+
+
+def parse_args(args=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate AI Scientist ideas from the a1c-knowledge MCP server"
+    )
+    build_arg_parser(parser)
     return parser.parse_args(args)
 
 
@@ -1312,6 +1381,16 @@ async def _main(args: argparse.Namespace) -> None:
     if not topics:
         print("No topics found. Try broadening --query, removing --confidence, or increasing --limit.")
         return
+
+    # Augment seed pool with DOIs from the wiki DB for each fetched topic
+    if topics and not args.no_db_seeds:
+        db_papers = fetch_db_dois_for_topics(topics)
+        existing_pids = {p.get("paperId") for p in doi_seed_papers}
+        new_from_db = [p for p in db_papers if p.get("paperId") not in existing_pids]
+        doi_seed_papers.extend(new_from_db)
+        if new_from_db:
+            print(f"[STAGE 1/4] Added {len(new_from_db)} DB-seeded paper(s); "
+                  f"doi_seed_papers total: {len(doi_seed_papers)}")
 
     print(f"\n[STAGE 2/4] Novelty check via Semantic Scholar")
     if args.no_novelty_check:

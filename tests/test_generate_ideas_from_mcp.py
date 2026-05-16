@@ -1069,6 +1069,7 @@ def test_ideas_json_has_s2_papers_key_after_recursive(tmp_path, monkeypatch):
          upatch("generate_ideas_from_mcp.distil_s2_query", return_value="test distilled query"), \
          upatch("generate_ideas_from_mcp.search_for_papers", return_value=[seed]), \
          upatch("generate_ideas_from_mcp.expand_papers_recursively", return_value=[seed]), \
+         upatch("generate_ideas_from_mcp.fetch_db_dois_for_topics", return_value=[]), \
          upatch("generate_ideas_from_mcp.translate_to_idea", return_value={
              "Name": "test_idea", "Title": "T", "Short Hypothesis": "H",
              "Related Work": "R", "Abstract": "A",
@@ -1456,3 +1457,103 @@ def test_fetch_fulltext_creates_named_pdfs_dir(tmp_path):
     assert pdfs_dir == expected_dir
     assert pdfs_dir.exists()
     assert (tmp_path / "pdfs").exists() is False
+
+
+# ---------------------------------------------------------------------------
+# DB DOI seeding — fetch_db_dois_for_topics + --no-db-seeds flag
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch, MagicMock
+
+
+def test_fetch_db_dois_returns_papers_for_topics(monkeypatch):
+    """fetch_db_dois_for_topics queries each topic slug and fetches S2 papers."""
+    monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.side_effect = [
+        [("10.1234/mt",)],   # music-therapy
+        [],                   # dementia-care
+    ]
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = lambda s: s
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    s2_paper = {"paperId": "pid1", "title": "Music Therapy Study", "year": 2023}
+
+    with patch("psycopg2.connect", return_value=mock_conn), \
+         patch("generate_ideas_from_mcp.fetch_paper_by_doi", return_value=s2_paper):
+        from generate_ideas_from_mcp import fetch_db_dois_for_topics
+        topics = [{"slug": "dementia-care"}, {"slug": "music-therapy"}]
+        result = fetch_db_dois_for_topics(topics)
+
+    assert len(result) == 1
+    assert result[0]["paperId"] == "pid1"
+
+
+def test_fetch_db_dois_deduplicates_by_paper_id(monkeypatch):
+    """When multiple topics link the same DOI, the paper appears once."""
+    monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.side_effect = [
+        [("10.1234/shared",)],
+        [("10.1234/shared",)],
+    ]
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    s2_paper = {"paperId": "pid1", "title": "Shared Paper"}
+
+    with patch("psycopg2.connect", return_value=mock_conn), \
+         patch("generate_ideas_from_mcp.fetch_paper_by_doi", return_value=s2_paper):
+        from generate_ideas_from_mcp import fetch_db_dois_for_topics
+        topics = [{"slug": "music-therapy"}, {"slug": "music-wellbeing"}]
+        result = fetch_db_dois_for_topics(topics)
+
+    assert len(result) == 1
+
+
+def test_fetch_db_dois_skips_when_no_password(monkeypatch):
+    """Without POSTGRES_PASSWORD, function returns [] without connecting."""
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    topics = [{"slug": "music-therapy"}]
+
+    # Also patch load_dotenv so it cannot repopulate POSTGRES_PASSWORD from .env file
+    with patch("psycopg2.connect") as mock_connect, \
+         patch("dotenv.load_dotenv"):
+        from generate_ideas_from_mcp import fetch_db_dois_for_topics
+        result = fetch_db_dois_for_topics(topics)
+
+    mock_connect.assert_not_called()
+    assert result == []
+
+
+def test_fetch_db_dois_skips_on_connection_error(monkeypatch):
+    """DB connection failure returns [] without crashing."""
+    monkeypatch.setenv("POSTGRES_PASSWORD", "testpass")
+    topics = [{"slug": "music-therapy"}]
+
+    with patch("psycopg2.connect", side_effect=Exception("connection refused")):
+        from generate_ideas_from_mcp import fetch_db_dois_for_topics
+        result = fetch_db_dois_for_topics(topics)
+
+    assert result == []
+
+
+def test_no_db_seeds_flag_is_parseable():
+    """--no-db-seeds flag must exist in the argparse config."""
+    import argparse
+    import generate_ideas_from_mcp as gim
+
+    parser = argparse.ArgumentParser()
+    gim.build_arg_parser(parser)
+    args = parser.parse_args([
+        "--query", "music therapy",
+        "--output", "/tmp/test.json",
+        "--no-db-seeds",
+    ])
+    assert args.no_db_seeds is True
