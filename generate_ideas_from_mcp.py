@@ -1229,20 +1229,22 @@ def fetch_db_dois_for_topics(topics: list[dict]) -> list[dict]:
         return []
 
     papers: list[dict] = []
-    with conn.cursor() as cur:
-        for slug in sorted(slug_set):
-            cur.execute(
-                'SELECT s.doi FROM "a1c-wiki-db".topic_sources ts '
-                'JOIN "a1c-wiki-db".sources s ON ts.source_slug = s.source_slug '
-                'WHERE ts.topic_slug = %s AND s.doi IS NOT NULL AND s.doi != %s',
-                (slug, ''),
-            )
-            for (doi,) in cur.fetchall():
-                paper = fetch_paper_by_doi(doi)
-                if paper and paper.get("paperId"):
-                    papers.append(paper)
-                    print(f"[DB-SEEDS]  DOI {doi!r} → {paper.get('title')!r}")
-    conn.close()
+    try:
+        with conn.cursor() as cur:
+            for slug in sorted(slug_set):
+                cur.execute(
+                    'SELECT s.doi FROM "a1c-wiki-db".topic_sources ts '
+                    'JOIN "a1c-wiki-db".sources s ON ts.source_slug = s.source_slug '
+                    'WHERE ts.topic_slug = %s AND s.doi IS NOT NULL AND s.doi != %s',
+                    (slug, ''),
+                )
+                for (doi,) in cur.fetchall():
+                    paper = fetch_paper_by_doi(doi)
+                    if paper and paper.get("paperId"):
+                        papers.append(paper)
+                        print(f"[DB-SEEDS]  DOI {doi!r} → {paper.get('title')!r}")
+    finally:
+        conn.close()
 
     seen: set[str] = set()
     unique: list[dict] = []

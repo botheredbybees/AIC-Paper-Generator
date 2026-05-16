@@ -1484,11 +1484,12 @@ def test_fetch_db_dois_returns_papers_for_topics(monkeypatch):
     s2_paper = {"paperId": "pid1", "title": "Music Therapy Study", "year": 2023}
 
     with patch("psycopg2.connect", return_value=mock_conn), \
-         patch("generate_ideas_from_mcp.fetch_paper_by_doi", return_value=s2_paper):
+         patch("generate_ideas_from_mcp.fetch_paper_by_doi", return_value=s2_paper) as mock_s2:
         from generate_ideas_from_mcp import fetch_db_dois_for_topics
         topics = [{"slug": "dementia-care"}, {"slug": "music-therapy"}]
         result = fetch_db_dois_for_topics(topics)
 
+    mock_s2.assert_called_once_with("10.1234/mt")
     assert len(result) == 1
     assert result[0]["paperId"] == "pid1"
 
