@@ -950,6 +950,18 @@ def test_expand_papers_skips_reference_fetch_on_http_error():
     assert any(p["paperId"] == "seed1" for p in result)
 
 
+def test_expand_papers_max_papers_9999_returns_all_candidates():
+    """Calling expand_papers_recursively with max_papers=9999 returns all expanded candidates."""
+    seeds = [_make_paper("seed1")]
+    extra = [_make_paper(f"p{i}") for i in range(120)]
+
+    with patch("generate_ideas_from_mcp.fetch_paper_citations", return_value=extra), \
+         patch("generate_ideas_from_mcp.fetch_paper_references", return_value=[]):
+        result = expand_papers_recursively(seeds, max_papers=9999)
+
+    assert len(result) == 121  # 1 seed + 120 citations
+
+
 def test_classify_papers_splits_by_open_access():
     papers = [
         _make_paper("oa1", is_oa=True),
@@ -1364,6 +1376,41 @@ def test_filter_relevant_seeds_hyphen_slug_splitting():
     )
     # "anxiety-reduction" → {"anxiety", "reduction"}, "therapy-outcomes" → {"therapy", "outcomes"}
     # paper title contains "anxiety", "reduction", "therapy" → overlap 3 >= 2
+    assert "p1" in [p["paperId"] for p in result]
+
+
+def test_filter_relevant_seeds_title_only_ignores_key_concepts():
+    """title_only=True rejects papers that match only via key_concepts, not the topic title."""
+    papers = [
+        # matches "techniques" from key_concepts but not the topic title words
+        {"paperId": "p1", "title": "High-speed photography techniques", "citationCount": 5},
+        # matches both title words "therapeutic" and "photography"
+        {"paperId": "p2", "title": "Therapeutic photography for wellbeing", "citationCount": 5},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="Therapeutic Photography",
+        key_concepts=["techniques", "visual art", "study"],
+        min_overlap=2,
+        title_only=True,
+    )
+    ids = [p["paperId"] for p in result]
+    assert "p1" not in ids   # only matches key_concept "techniques", not title words
+    assert "p2" in ids        # matches both title words
+
+
+def test_filter_relevant_seeds_title_only_false_includes_key_concepts():
+    """Default (title_only=False) accepts papers matching via key_concepts."""
+    papers = [
+        {"paperId": "p1", "title": "Photography techniques for artists", "citationCount": 5},
+    ]
+    result = filter_relevant_seeds(
+        papers,
+        topic_title="Therapeutic Photography",
+        key_concepts=["techniques", "artists"],
+        min_overlap=2,
+        title_only=False,
+    )
     assert "p1" in [p["paperId"] for p in result]
 
 

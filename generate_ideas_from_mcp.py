@@ -385,18 +385,24 @@ def filter_relevant_seeds(
     topic_title: str,
     key_concepts: list[str],
     min_overlap: int = 2,
+    title_only: bool = False,
 ) -> list[dict]:
-    """Keep papers whose title overlaps >= min_overlap meaningful words with the topic."""
+    """Keep papers whose title overlaps >= min_overlap meaningful words with the topic.
+
+    title_only=True restricts the word set to the topic title (skipping key_concepts),
+    which avoids false positives from generic methodology terms in concepts.
+    """
     topic_words: set[str] = set()
     for word in topic_title.lower().split():
         w = re.sub(r"[^a-z]", "", word)
         if w and w not in _S2_STOP_WORDS:
             topic_words.add(w)
-    for concept in key_concepts:
-        for part in re.split(r"[-\s]+", concept.lower()):
-            w = re.sub(r"[^a-z]", "", part)
-            if w and w not in _S2_STOP_WORDS:
-                topic_words.add(w)
+    if not title_only:
+        for concept in key_concepts:
+            for part in re.split(r"[-\s]+", concept.lower()):
+                w = re.sub(r"[^a-z]", "", part)
+                if w and w not in _S2_STOP_WORDS:
+                    topic_words.add(w)
 
     accepted = []
     for paper in papers:
@@ -656,7 +662,7 @@ def write_library_html(
     tab3_btn = ""
     tab3_panel = ""
     localstorage_lastpath = ""
-    tab_restore_js = """  var lastTab = localStorage.getItem('activeTab') || 'tab2';
+    tab_restore_js = """  var lastTab = _lsGet('activeTab') || 'tab2';
   var panelEl = document.getElementById(lastTab + '-panel');
   var btnEl = document.getElementById(lastTab + '-btn');
   if (panelEl && btnEl) {
@@ -716,8 +722,8 @@ def write_library_html(
   <textarea id="launch-cmd" class="launch-cmd" readonly rows="7"></textarea>
 </div>
 </div>"""
-        localstorage_lastpath = "localStorage.setItem('lastIdeasPath', LOAD_IDEAS_PATH);"
-        tab3_init_js = """  var lastModel = localStorage.getItem('lastModel');
+        localstorage_lastpath = "_lsSet('lastIdeasPath', LOAD_IDEAS_PATH);"
+        tab3_init_js = """  var lastModel = _lsGet('lastModel');
   fetch(OLLAMA_BASE_URL + '/api/tags')
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -734,7 +740,7 @@ def write_library_html(
       var sel = document.getElementById('model-select');
       var inp = document.createElement('input');
       inp.type = 'text'; inp.id = 'model-select';
-      inp.value = localStorage.getItem('lastModel') || 'ollama/qwen2.5:14b';
+      inp.value = _lsGet('lastModel') || 'ollama/qwen2.5:14b';
       inp.addEventListener('input', updateCmd);
       sel.parentNode.replaceChild(inp, sel);
       updateCmd();
@@ -748,7 +754,7 @@ function updateCmd() {
   var modelEl = document.getElementById('model-select');
   var model = modelEl.value || 'ollama/qwen2.5:14b';
   var citeRounds = document.getElementById('cite-rounds').value || '10';
-  var path = localStorage.getItem('lastIdeasPath') || LOAD_IDEAS_PATH;
+  var path = _lsGet('lastIdeasPath') || LOAD_IDEAS_PATH;
   document.getElementById('launch-cmd').value =
     'python launch_proposal_writer.py \\\n' +
     '  --load_ideas ' + path + ' \\\n' +
@@ -757,7 +763,7 @@ function updateCmd() {
     '  --model_writeup ' + model + ' \\\n' +
     '  --model_citation ' + model + ' \\\n' +
     '  --num_cite_rounds ' + citeRounds;
-  localStorage.setItem('lastModel', model);
+  _lsSet('lastModel', model);
 }
 function copyCmd(btn) {
   navigator.clipboard.writeText(document.getElementById('launch-cmd').value).then(function() {
@@ -920,12 +926,12 @@ function lookupSeedDoi() {
     <label>Output path</label>
     <input type="text" id="gen-output"
            value="ai_scientist/ideas/mcp_generated.json"
-           oninput="updateGenCmd(); localStorage.setItem('lastIdeasPath', this.value);"
+           oninput="updateGenCmd(); _lsSet('lastIdeasPath', this.value);"
            style="min-width:340px">
   </div>
 </div>"""
 
-    tab1_model_fetch_js = """  var lastModelGen = localStorage.getItem('lastModel');
+    tab1_model_fetch_js = """  var lastModelGen = _lsGet('lastModel');
   fetch(OLLAMA_BASE_URL + '/api/tags')
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -944,7 +950,7 @@ function lookupSeedDoi() {
       var sel = document.getElementById('model-select-gen');
       var inp = document.createElement('input');
       inp.type = 'text'; inp.id = 'model-select-gen';
-      inp.value = localStorage.getItem('lastModel') || 'ollama/qwen2.5:14b';
+      inp.value = _lsGet('lastModel') || 'ollama/qwen2.5:14b';
       inp.addEventListener('input', updateGenCmd);
       sel.parentNode.replaceChild(inp, sel);
       updateGenCmd();
@@ -998,7 +1004,7 @@ function updateGenCmd() {
 
   var ta = document.getElementById('generate-cmd');
   if (ta) ta.value = cmd;
-  localStorage.setItem('lastModel', model);
+  _lsSet('lastModel', model);
 }
 function copyGenCmd(btn) {
   var ta = document.getElementById('generate-cmd');
@@ -1100,13 +1106,15 @@ function updateRm() {{
 </div>
 {tab3_panel}
 <script>
+var _lsGet = function(k) {{ try {{ return window.localStorage.getItem(k); }} catch(e) {{ return null; }} }};
+var _lsSet = function(k, v) {{ try {{ window.localStorage.setItem(k, v); }} catch(e) {{}} }};
 {js_constants}
 function showTab(tab, btn) {{
   document.querySelectorAll('.tab-panel').forEach(function(p) {{ p.classList.remove('active'); }});
   document.querySelectorAll('.tab-btn').forEach(function(b) {{ b.classList.remove('active'); }});
   document.getElementById(tab + '-panel').classList.add('active');
   btn.classList.add('active');
-  localStorage.setItem('activeTab', tab);
+  _lsSet('activeTab', tab);
 }}
 document.addEventListener('DOMContentLoaded', function() {{
   {localstorage_lastpath}
@@ -1231,7 +1239,7 @@ def parse_args(args=None) -> argparse.Namespace:
                         dest="fetch_fulltext",
                         help="Download and extract Discussion/Results from OA PDFs (requires --recursive)")
     parser.add_argument("--library-list", default=None, dest="library_list",
-                        help="Path to write library.html (default: alongside --output)")
+                        help="Path to write a Markdown paper shopping list (paywalled + blocked)")
     return parser.parse_args(args)
 
 
@@ -1343,12 +1351,21 @@ async def _main(args: argparse.Namespace) -> None:
 
                 if args.recursive and seed_papers:
                     print(f"    [S2] Recursive expansion (cap={args.max_papers})...")
-                    filtered = filter_relevant_seeds(seed_papers, topic.get("title", ""), key_concepts)
+                    filtered = filter_relevant_seeds(
+                        seed_papers, topic.get("title", ""), key_concepts, title_only=True
+                    )
                     if not filtered:
                         print(f"    [S2] WARNING: relevance gate filtered all seeds — falling back to unfiltered list")
                         filtered = seed_papers
-                    s2_papers = expand_papers_recursively(filtered, max_papers=args.max_papers)
-                    print(f"    [S2] {len(s2_papers)} paper(s) after expansion")
+                    candidates = expand_papers_recursively(filtered, max_papers=9999)
+                    post_filtered = filter_relevant_seeds(
+                        candidates, topic.get("title", ""), key_concepts, title_only=True
+                    )
+                    if not post_filtered:
+                        print(f"    [S2] WARNING: post-expansion relevance gate filtered all — using pre-expansion seeds")
+                        post_filtered = filtered
+                    s2_papers = post_filtered[:args.max_papers]
+                    print(f"    [S2] {len(s2_papers)} paper(s) after expansion + relevance filtering")
                 else:
                     s2_papers = seed_papers
 
@@ -1421,11 +1438,10 @@ async def _main(args: argparse.Namespace) -> None:
                 all_downloaded.append((p, fname))
 
     if all_paywalled or all_blocked or all_downloaded or ideas:
-        library_list_path = args.library_list or str(Path(args.output).parent / "library.html")
         pdfs_dir = Path(args.output).parent / "pdfs"
         write_library_html(
             all_paywalled,
-            library_list_path,
+            str(Path(args.output).parent / "library.html"),
             blocked_oa=all_blocked,
             downloaded=all_downloaded or None,
             pdfs_dir=pdfs_dir if all_downloaded else None,
@@ -1435,6 +1451,8 @@ async def _main(args: argparse.Namespace) -> None:
             supabase_url=os.environ.get("SUPABASE_URL"),
             supabase_anon_key=os.environ.get("SUPABASE_ANON_KEY"),
         )
+        if args.library_list:
+            write_library_list(all_paywalled, args.library_list, blocked_oa=all_blocked)
 
     if args.append and os.path.exists(args.output):
         try:
