@@ -1377,7 +1377,7 @@ async def _main(args: argparse.Namespace) -> None:
                 oa_with_pdf = [p for p in oa_papers if (p.get("openAccessPdf") or {}).get("url")]
                 print(f"    [PDF] {len(oa_with_pdf)} of {len(oa_papers)} OA paper(s) have PDF URLs"
                       f" ({len(s2_papers) - len(oa_papers)} paywalled); fetching full text...")
-                pdfs_dir = Path(args.output).parent / "pdfs"
+                pdfs_dir = Path(args.output).parent / f"{Path(args.output).stem}_pdfs"
                 pdfs_dir.mkdir(exist_ok=True)
                 for p in oa_with_pdf:
                     oa_url = (p.get("openAccessPdf") or {}).get("url")
@@ -1438,7 +1438,7 @@ async def _main(args: argparse.Namespace) -> None:
                 all_downloaded.append((p, fname))
 
     if all_paywalled or all_blocked or all_downloaded or ideas:
-        pdfs_dir = Path(args.output).parent / "pdfs"
+        pdfs_dir = Path(args.output).parent / f"{Path(args.output).stem}_pdfs"
         write_library_html(
             all_paywalled,
             str(Path(args.output).parent / "library.html"),

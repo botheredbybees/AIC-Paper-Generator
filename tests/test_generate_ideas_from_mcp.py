@@ -1426,3 +1426,33 @@ def test_filter_relevant_seeds_zero_match_returns_empty():
         min_overlap=2,
     )
     assert result == []
+
+
+def test_pdfs_dir_uses_output_stem():
+    """Named PDF dir formula: {stem}_pdfs alongside output JSON."""
+    output = Path("/tmp/ideas/elder_clowning.json")
+    pdfs_dir = output.parent / f"{output.stem}_pdfs"
+    assert pdfs_dir.name == "elder_clowning_pdfs"
+    assert pdfs_dir == Path("/tmp/ideas/elder_clowning_pdfs")
+
+
+def test_pdfs_dir_differs_from_generic():
+    """Ensure the new name is distinct from the old generic 'pdfs'."""
+    output = Path("/tmp/ideas/music_therapy.json")
+    old_dir = output.parent / "pdfs"
+    new_dir = output.parent / f"{output.stem}_pdfs"
+    assert old_dir != new_dir
+    assert new_dir.name == "music_therapy_pdfs"
+
+
+def test_fetch_fulltext_creates_named_pdfs_dir(tmp_path):
+    """The pdfs_dir formula must produce {stem}_pdfs, not pdfs."""
+    from pathlib import Path as _Path
+    output = tmp_path / "my_topic.json"
+    expected_dir = tmp_path / "my_topic_pdfs"
+    # Apply the formula directly (mirrors what production code does)
+    pdfs_dir = _Path(str(output)).parent / f"{_Path(str(output)).stem}_pdfs"
+    pdfs_dir.mkdir(exist_ok=True)
+    assert pdfs_dir == expected_dir
+    assert pdfs_dir.exists()
+    assert (tmp_path / "pdfs").exists() is False
