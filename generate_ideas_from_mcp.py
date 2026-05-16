@@ -1283,7 +1283,7 @@ def fetch_db_dois_for_topics(topics: list[dict]) -> list[dict]:
             for slug in sorted(slug_set):
                 cur.execute(
                     'SELECT s.doi FROM "a1c-wiki-db".topic_sources ts '
-                    'JOIN "a1c-wiki-db".sources s ON ts.source_slug = s.source_slug '
+                    'JOIN "a1c-wiki-db".sources s ON ts.source_slug = s.slug '
                     'WHERE ts.topic_slug = %s AND s.doi IS NOT NULL AND s.doi != %s',
                     (slug, ''),
                 )
