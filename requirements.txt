@@ -28,6 +28,7 @@ omegaconf
 botocore
 boto3
 mcp
+psycopg2-binary
 python-dotenv
 pytest
 pytest-asyncio

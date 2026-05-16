@@ -1385,7 +1385,7 @@ async def _main(args: argparse.Namespace) -> None:
         return
 
     # Augment seed pool with DOIs from the wiki DB for each fetched topic
-    if topics and not args.no_db_seeds:
+    if topics and not args.no_db_seeds and args.query:
         db_papers = fetch_db_dois_for_topics(topics)
         existing_pids = {p.get("paperId") for p in doi_seed_papers}
         new_from_db = [p for p in db_papers if p.get("paperId") not in existing_pids]
