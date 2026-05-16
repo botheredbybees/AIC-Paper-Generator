@@ -125,11 +125,11 @@ This fork adds two scripts that generate 4-page ICBINB research proposals from t
 generate_ideas_from_mcp.py    # MCP query → S2 novelty → Ollama LLM → ideas JSON
 launch_proposal_writer.py     # ideas JSON → experiment folder → citation pre-pop → PDF
 tests/
-  test_generate_ideas_from_mcp.py   # 93 tests
+  test_generate_ideas_from_mcp.py   # 115 tests
   test_launch_proposal_writer.py    # 14 tests
   conftest.py                        # pytest-asyncio config
 pytest.ini                           # asyncio_mode = auto
-.env.example                         # OLLAMA_BASE_URL, MCP_URL, S2_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
+.env.example                         # OLLAMA_BASE_URL, MCP_URL, S2_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY, GEMINI_API_KEY
 ```
 
 ### Upstream Modifications
@@ -167,11 +167,15 @@ The upstream code calls `pdflatex` and `bibtex`. This system uses **tectonic** s
 
 ```bash
 # Stage 1: generate ideas (35-60 sec per topic, LLM-bound)
+# PDFs download to {output-stem}_pdfs/ beside the ideas JSON (e.g. elder_clowning_pdfs/)
 python generate_ideas_from_mcp.py \
   --query "therapeutic clowning older adults wellbeing" \
   --limit 3 --max-questions 1 \
   --model ollama/qwen2.5:14b \
   --output ai_scientist/ideas/elder_clowning.json
+
+# DB DOI seeding runs automatically after MCP fetch (requires wiki-db/.env with POSTGRES_PASSWORD).
+# Opt out with --no-db-seeds. Requires psycopg2-binary (in requirements.txt).
 
 # List ideas before committing to an index
 python launch_proposal_writer.py \
@@ -195,7 +199,7 @@ Output: `experiments/<timestamp>_<name>_proposal_0/<name>_reflection1.pdf`
 pytest tests/ -v
 ```
 
-197 tests, all passing. Tests mock MCP, S2, and LLM calls — no external services needed.
+115 tests in `test_generate_ideas_from_mcp.py` (112 passing; 3 pre-existing failures: Ollama URL env tests + Windows pdfs-dir path test — unrelated to pipeline logic). Tests mock MCP, S2, and LLM calls — no external services needed.
 
 ### Known Issues
 
@@ -229,4 +233,6 @@ Tab state, last model, and last ideas path are persisted in `localStorage`. Open
 - `docs/superpowers/plans/2026-05-14-library-html.md`
 - `docs/superpowers/plans/2026-05-14-library-html-tabs.md`
 - `docs/superpowers/plans/2026-05-14-library-html-tab1.md`
+- `docs/superpowers/plans/2026-05-17-aic-paper-generator-tasks.md` — named PDF dir, DB DOI seeding, Gemini key (shipped)
+- `docs/superpowers/plans/2026-05-17-aic-topic-flag.md` — `--topic` flag (pending)
 - `programmers_notes.md` — implementation internals and gotchas
