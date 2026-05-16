@@ -911,6 +911,14 @@ function lookupSeedDoi() {
 </div>
 <div class="form-row">
   <div class="field" style="flex:2">
+    <label>Topic slug (--topic)</label>
+    <input type="text" id="gen-topic" placeholder="therapeutic-clowning"
+           oninput="updateGenCmd()" style="min-width:260px"
+           title="Wiki topic slug — fetches the topic directly and seeds from its linked DOIs">
+  </div>
+</div>
+<div class="form-row">
+  <div class="field" style="flex:2">
     <label>Tag <span class="field-help">(discovery aid &mdash; type to search)</span></label>
     {tag_datalist_html}
   </div>
@@ -1013,6 +1021,7 @@ function lookupSeedDoi() {
     tab1_update_js = r"""
 function updateGenCmd() {
   var query = (document.getElementById('gen-query') || {}).value || '';
+  var topic = (document.getElementById('gen-topic') || {}).value || '';
   var domain = (document.getElementById('gen-domain') || {}).value || '';
   var confidence = (document.getElementById('gen-confidence') || {}).value || '';
   var modelEl = document.getElementById('model-select-gen');
@@ -1026,10 +1035,11 @@ function updateGenCmd() {
   var output = (document.getElementById('gen-output') || {}).value || 'ai_scientist/ideas/mcp_generated.json';
 
   var cmd = 'python generate_ideas_from_mcp.py';
-  if (!query && !seedDoi && !seedPdf) {
-    cmd = '# WARNING: provide --query, --seed-doi, or --seed-pdf\n' + cmd;
+  if (!query && !topic && !seedDoi && !seedPdf) {
+    cmd = '# WARNING: provide --query, --topic, --seed-doi, or --seed-pdf\n' + cmd;
   }
   if (query) cmd += ' \\\n  --query "' + query.replace(/"/g, '\\"') + '"';
+  if (topic) cmd += ' \\\n  --topic ' + topic;
   if (domain) cmd += ' \\\n  --domain ' + domain;
   if (confidence) cmd += ' \\\n  --confidence ' + confidence;
   cmd += ' \\\n  --model ' + model;
