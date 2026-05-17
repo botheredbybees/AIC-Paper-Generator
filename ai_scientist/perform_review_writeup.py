@@ -330,16 +330,17 @@ def perform_review_writeup(
             print(f"[Review] Scrubbed {len(removed)} undefined citation key(s): {removed}")
             template_path.write_text(cleaned, encoding="utf-8")
 
-    # --- Compile with tectonic ---
-    print(f"[Review] Compiling PDF with tectonic...")
-    result = subprocess.run(
-        ["tectonic", "template.tex"],
-        cwd=str(latex_dest),
-        capture_output=True,
-        text=True,
-    )
+    # --- Compile with pdflatex (two passes for natbib) ---
+    print(f"[Review] Compiling PDF with pdflatex...")
+    for _pass in range(2):
+        result = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "template.tex"],
+            cwd=str(latex_dest),
+            capture_output=True,
+            text=True,
+        )
     if result.returncode != 0:
-        print(f"[Review] WARNING: tectonic exited {result.returncode}")
+        print(f"[Review] WARNING: pdflatex exited {result.returncode}")
         if result.stdout:
             print("[Review] stdout:\n" + result.stdout)
         if result.stderr:
