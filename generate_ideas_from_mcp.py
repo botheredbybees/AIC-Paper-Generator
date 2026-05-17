@@ -1590,6 +1590,7 @@ async def _main(args: argparse.Namespace) -> None:
 
     if all_paywalled or all_blocked or all_downloaded or ideas:
         pdfs_dir = Path(args.output).parent / f"{Path(args.output).stem}_pdfs"
+        pdfs_dir.mkdir(exist_ok=True)
         write_library_html(
             all_paywalled,
             str(Path(args.output).parent / "library.html"),
