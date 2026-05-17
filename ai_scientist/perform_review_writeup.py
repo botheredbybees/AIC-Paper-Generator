@@ -330,8 +330,24 @@ def perform_review_writeup(
             print(f"[Review] Scrubbed {len(removed)} undefined citation key(s): {removed}")
             template_path.write_text(cleaned, encoding="utf-8")
 
-    # --- Compile with pdflatex (two passes for natbib) ---
-    print(f"[Review] Compiling PDF with pdflatex...")
+    # --- Compile: pdflatex → bibtex → pdflatex → pdflatex ---
+    print("[Review] Compiling PDF...")
+    # Pass 1: generate .aux file
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "template.tex"],
+        cwd=str(latex_dest),
+        capture_output=True,
+        text=True,
+    )
+    # BibTeX pass: resolve citations from references.bib into .bbl
+    if bib_content:
+        subprocess.run(
+            ["bibtex", "template"],
+            cwd=str(latex_dest),
+            capture_output=True,
+            text=True,
+        )
+    # Pass 2 + 3: incorporate .bbl and resolve cross-references
     for _pass in range(2):
         result = subprocess.run(
             ["pdflatex", "-interaction=nonstopmode", "template.tex"],
@@ -353,7 +369,10 @@ def perform_review_writeup(
         print(f"[Review] Full log saved to {log_path}")
     else:
         pdf = latex_dest / "template.pdf"
-        print(f"[Review] PDF: {pdf}")
+        idea_name = re.sub(r"[^\w\-]", "_", idea.get("Name", "proposal"))
+        named_pdf = latex_dest / f"{idea_name}.pdf"
+        shutil.copy2(str(pdf), str(named_pdf))
+        print(f"[Review] PDF: {named_pdf}")
 
 
 def _valid_bib_keys(bib_text: str) -> set[str]:

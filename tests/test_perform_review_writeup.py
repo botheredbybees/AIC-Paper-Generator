@@ -152,7 +152,7 @@ def test_perform_review_writeup_replaces_all_placeholders(tmp_path):
         assert placeholder not in content, f"{placeholder} was not replaced"
 
 
-def test_perform_review_writeup_invokes_tectonic(tmp_path):
+def test_perform_review_writeup_invokes_pdflatex(tmp_path):
     idea = _make_clean_idea()
 
     with patch("ai_scientist.perform_review_writeup.get_response_from_llm",
@@ -172,8 +172,10 @@ def test_perform_review_writeup_invokes_tectonic(tmp_path):
         )
 
     assert mock_sub.called
-    cmd = mock_sub.call_args[0][0]
-    assert "tectonic" in cmd[0] or "tectonic" in str(cmd)
+    # All subprocess calls should be pdflatex (no tier3 abstracts → no bibtex run)
+    for call in mock_sub.call_args_list:
+        cmd = call[0][0]
+        assert "pdflatex" in cmd[0], f"Expected pdflatex call, got: {cmd}"
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +208,9 @@ def test_template_does_not_have_nocite_star():
         "template must not use \\nocite{*} — only cited papers should appear in the reference list"
 
 
-def test_template_compiles_with_tectonic(tmp_path):
+def test_template_compiles_with_pdflatex(tmp_path):
     """Smoke-compile the template with placeholder content and a real .bib entry,
-    then verify the PDF exists and the reference appears in it."""
+    then verify the PDF exists."""
     import subprocess, shutil
     src = Path(__file__).parent.parent / "ai_scientist" / "blank_review_latex"
     for f in src.iterdir():
@@ -229,15 +231,22 @@ def test_template_compiles_with_tectonic(tmp_path):
         "@article{test2024,\n  title={Test Article},\n  author={Test Author},\n  year={2024},\n}\n"
     )
 
-    result = subprocess.run(
-        ["tectonic", "template.tex"],
-        cwd=str(tmp_path),
-        capture_output=True,
-        text=True,
-        timeout=120,
+    # pdflatex → bibtex → pdflatex → pdflatex
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "template.tex"],
+        cwd=str(tmp_path), capture_output=True, text=True, timeout=120,
     )
+    subprocess.run(
+        ["bibtex", "template"],
+        cwd=str(tmp_path), capture_output=True, text=True, timeout=60,
+    )
+    for _ in range(2):
+        result = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "template.tex"],
+            cwd=str(tmp_path), capture_output=True, text=True, timeout=120,
+        )
     assert result.returncode == 0, (
-        f"tectonic failed (exit {result.returncode}):\n"
+        f"pdflatex failed (exit {result.returncode}):\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert (tmp_path / "template.pdf").exists()
