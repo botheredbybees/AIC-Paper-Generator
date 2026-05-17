@@ -307,8 +307,9 @@ def main() -> None:
         # Tier 1: MCP synthesis
         tier1 = (idea.get("_mcp_topic") or {}).get("body", "")
 
-        # Tier 2: manual PDFs from pdfs/ folder alongside the ideas JSON
-        pdf_dir = os.path.join(os.path.dirname(str(load_ideas)), "pdfs")
+        # Tier 2: manual PDFs from {stem}_pdfs/ folder alongside the ideas JSON
+        pdf_dir = os.path.join(os.path.dirname(str(load_ideas)),
+                               Path(load_ideas).stem + "_pdfs")
         tier2: dict = {}
         if os.path.isdir(pdf_dir):
             for pdf_path in _glob.glob(os.path.join(pdf_dir, "*.pdf")):
